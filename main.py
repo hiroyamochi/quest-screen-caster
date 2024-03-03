@@ -4,10 +4,18 @@ import subprocess
 import os
 import threading
 import configparser
+import sys
+
+# PyInstaller Support
+base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+
+# path to scrcpy.exe
+scrcpy_path = os.path.join(base_path, 'scrcpy', 'scrcpy.exe')
+
 
 # Get the directory of the current script
 script_dir = os.path.dirname(os.path.realpath(__file__))
-scrcpy_dir = os.path.join(script_dir, 'scrcpy')
+# scrcpy_dir = os.path.join(bundle_dir, 'scrcpy')
 
 # Load config
 def load_config():
@@ -31,6 +39,12 @@ def initialize_adb():
 def start_scrcpy():
     global casting_devices
 
+    # Hide window when starting scrcpy
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = subprocess.SW_HIDE 
+
+    # Set options
     serial = serial_var.get()
     size = size_entry.get()
     bitrate = bitrate_entry.get() or default_bitrate
@@ -39,7 +53,7 @@ def start_scrcpy():
     # device = device_type_var.get()
 
     # Construct the command
-    command = ["scrcpy", "-s", serial]
+    command = [scrcpy_path, "-s", serial]
     if size:
         command.extend(["--max-size", size])
     if bitrate:
@@ -54,7 +68,10 @@ def start_scrcpy():
     #     command.append(["--crop 2064:2208:2064:100"]) # Consider later
 
     # Start the process asynchronously and redirect stderr to stdout
-    process = subprocess.Popen(command, cwd=scrcpy_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    process = subprocess.Popen(
+        command,
+        creationflags=subprocess.CREATE_NO_WINDOW
+        )
 
     casting_devices[serial] = process
 
