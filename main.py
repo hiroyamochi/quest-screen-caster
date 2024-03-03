@@ -34,26 +34,27 @@ def initialize_adb():
     subprocess.run(["adb", "kill-server"])
     # Notify the GUI that the initialization is complete
     # loading_label.config(text="GUI ready.")
-    get_serials_async()
+    get_device_details_async()
 
 def start_scrcpy():
     global casting_devices
 
     # Hide window when starting scrcpy
-    si = subprocess.STARTUPINFO()
-    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    si.wShowWindow = subprocess.SW_HIDE 
+    # si = subprocess.STARTUPINFO()
+    # si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    # si.wShowWindow = subprocess.SW_HIDE 
 
     # Set options
-    serial = serial_var.get()
+    full_device_info = serial_var.get()
+    serial_id = full_device_info.split(" (")[1].rstrip(")")
     size = size_entry.get()
     bitrate = bitrate_entry.get() or default_bitrate
     screen_off = screen_off_var.get()
-    title = f"Scrcpy for Quest - {serial}"
+    title = f"Scrcpy for Quest - {serial_id}"
     # device = device_type_var.get()
 
     # Construct the command
-    command = [scrcpy_path, "-s", serial]
+    command = [scrcpy_path, "-s", serial_id]
     if size:
         command.extend(["--max-size", size])
     if bitrate:
@@ -83,10 +84,10 @@ def monitor_casting(serial):
 
     # Wait for the process to finish
     process = casting_devices[serial]
-    stdout, _ = process.communicate()  # This will also capture stderr because of the redirection
+    # stdout, _ = process.communicate()  # This will also capture stderr because of the redirection
 
     # Print the output, which includes stderr
-    print(stdout.decode())
+    # print(stdout.decode())
 
     # Remove the process from the dictionary
     del casting_devices[serial]
@@ -106,19 +107,31 @@ def stop_scrcpy():
     del casting_devices[selected_device]
     print(f"Casting stopped for device: {selected_device}")
 
-def get_serials_async():
-    def get_serials():
-        result = subprocess.run(["adb", "devices"], capture_output=True, text=True)
+def get_device_details_async():
+    def get_device_details():
+        result = subprocess.run(["adb", "devices", "-l"], capture_output=True, text=True)
         lines = result.stdout.splitlines()
-        serials = [line.split()[0] for line in lines[1:] if line.endswith("device")]
-        serial_var.set(serials[0] if serials else "")
+        devices = []
+        for line in lines[1:]:  # 最初の行はヘッダ情報なのでスキップ
+            if "device" in line:
+                parts = line.split()
+                serial = parts[0]
+                details = " ".join(parts[1:])
+                # デバイスの詳細からモデル名を抽出
+                model = [s for s in details.split() if "model:" in s][0].replace("model:", "")
+                devices.append(f"{model} ({serial})")
+        
+        # プルダウンメニューを更新
+        serial_var.set(devices[0] if devices else "")
         serial_menu["menu"].delete(0, "end")
-        for serial in serials:
-            serial_menu["menu"].add_command(label=serial, command=tk._setit(serial_var, serial))
-        get_button.config(state="normal")  # Enable the get button
+        for device in devices:
+            serial_menu["menu"].add_command(label=device, command=tk._setit(serial_var, device))
+        
+        get_button.config(state="normal")  # ボタンを再度有効にする
+        print(devices)
 
-    get_button.config(state="disabled")  # Disable the get button while processing
-    threading.Thread(target=get_serials).start()
+    get_button.config(state="disabled")  # ボタンを無効にして処理中を示す
+    threading.Thread(target=get_device_details).start()
 
 # Create Tkinter window
 root = tk.Tk()
@@ -138,7 +151,7 @@ serial_label.grid(row=0, column=0, sticky=tk.W)
 serial_var = tk.StringVar()
 serial_menu = tk.OptionMenu(root, serial_var, "")
 serial_menu.grid(row=0, column=1, sticky=tk.EW)
-get_button = tk.Button(root, text="Get", command=get_serials_async)
+get_button = tk.Button(root, text="Get", command=get_device_details_async)
 get_button.grid(row=0, column=2)
 
 # Mirroring window size specification
