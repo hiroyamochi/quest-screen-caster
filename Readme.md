@@ -12,9 +12,9 @@ This is a simple GUI for [Scrcpy](https://github.com/Genymobile/scrcpy), a tool 
 Make sure that `scrcpy` and `adb` are located in the `scrcpy` directory in the same directory as this script.
 
 ## Build
-- Run following:
+- Run following in the project directory:
 ```bash
-pyinstaller --onefile --windowed --add-data "path/to/quest-screen-caster/scrcpy;scrcpy" main.py --name screen-caster-quest
+pyinstaller --onefile --windowed --add-data "scrcpy;scrcpy" main.py --name screen-caster-quest
 ```
 
 

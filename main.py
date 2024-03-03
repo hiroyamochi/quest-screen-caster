@@ -74,10 +74,10 @@ def start_scrcpy():
         creationflags=subprocess.CREATE_NO_WINDOW
         )
 
-    casting_devices[serial] = process
+    casting_devices[serial_id] = process
 
     # Start a separate thread to wait for the process to finish and output any errors
-    threading.Thread(target=monitor_casting, args=(serial,)).start()
+    threading.Thread(target=monitor_casting, args=(serial_id,)).start()
 
 def monitor_casting(serial):
     global casting_devices
@@ -112,25 +112,25 @@ def get_device_details_async():
         result = subprocess.run(["adb", "devices", "-l"], capture_output=True, text=True)
         lines = result.stdout.splitlines()
         devices = []
-        for line in lines[1:]:  # 最初の行はヘッダ情報なのでスキップ
+        for line in lines[1:]:  # Skip the first line
             if "device" in line:
                 parts = line.split()
                 serial = parts[0]
                 details = " ".join(parts[1:])
-                # デバイスの詳細からモデル名を抽出
+                # Extract the model name
                 model = [s for s in details.split() if "model:" in s][0].replace("model:", "")
                 devices.append(f"{model} ({serial})")
         
-        # プルダウンメニューを更新
+        # Update the dropdown menu with the found devices
         serial_var.set(devices[0] if devices else "")
         serial_menu["menu"].delete(0, "end")
         for device in devices:
             serial_menu["menu"].add_command(label=device, command=tk._setit(serial_var, device))
         
-        get_button.config(state="normal")  # ボタンを再度有効にする
+        get_button.config(state="normal")  # Re-enable the button
         print(devices)
 
-    get_button.config(state="disabled")  # ボタンを無効にして処理中を示す
+    get_button.config(state="disabled")  # Disable the button while fetching the devices
     threading.Thread(target=get_device_details).start()
 
 # Create Tkinter window
