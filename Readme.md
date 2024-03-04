@@ -24,7 +24,7 @@ screen-caster-quest
 ## Build
 - Run following in the project directory:
 ```bash
-pyinstaller --onefile --windowed --add-data main.py --name screen-caster-quest
+pyinstaller main.py --onefile --windowed --icon=icon.ico --add-data "icon.ico;." --name screen-caster-quest
 ```
 
 ## Configuration

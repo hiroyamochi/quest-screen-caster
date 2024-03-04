@@ -36,7 +36,6 @@ def initialize_adb():
     # adb kill-serverを実行
     subprocess.run(["adb", "kill-server"])
     # Notify the GUI that the initialization is complete
-    # loading_label.config(text="GUI ready.")
     get_device_details_async()
 
 def start_scrcpy():
@@ -52,7 +51,7 @@ def start_scrcpy():
     device_type = device_type_var.get()
 
     # Construct the command
-    command = [scrcpy_path, "-s", serial]
+    command = [scrcpy_path, "-s", serial, "--no-audio"]
     if size:
         command.extend(["--max-size", size])
     if bitrate:
@@ -138,7 +137,10 @@ def get_device_details_async():
             serial_menu["menu"].add_command(label=label, command=tk._setit(serial_var, label))
         
         get_button.config(state="normal")  # Re-enable the button
-        print(device_serials)
+        if devices:
+            log_label.config(text="Device ready.")
+        else:
+            log_label.config(text="No devices found.")
 
     get_button.config(state="disabled")  # Disable the button while fetching the devices
     threading.Thread(target=get_device_details).start()
@@ -158,14 +160,21 @@ def enable_proximity_sensor():
 # Create Tkinter window
 root = tk.Tk()
 root.title("Scrcpy GUI for Quest")
-root.resizable(False, False)  # Disable window resizing
-root.geometry("600x300")  # Set window size
+# root.resizable(False, False)  # Disable window resizing
+root.geometry("600x400")  # Set window size
+
+# Set icon
+icon_path = os.path.join(find_application_directory(), "icon.ico")
+root.iconbitmap(icon_path)
+
 
 # Set font
 if 'win' in root.tk.call('tk', 'windowingsystem'):
     font = ("MS Gothic", 12)
 else:
     font = ("Noto Sans CJK JP", 12)
+
+### Create widgets ###
 
 # Serial number input and Get button
 serial_label = tk.Label(root, text="Device:")
@@ -197,31 +206,37 @@ screen_off_checkbox = tk.Checkbutton(root, text="Turn off screen when disconnect
 screen_off_checkbox.grid(row=3, column=0, sticky=tk.W, padx=5, pady=5, columnspan=2)
 
 # Start/Stop mirroring buttons
-start_button = tk.Button(root, text="Start Scrcpy", command=start_scrcpy)
-start_button.grid(row=4, column=0, padx=5, pady=5, sticky=tk.W)
-stop_button = tk.Button(root, text="Stop Scrcpy", command=stop_scrcpy)
-stop_button.grid(row=4, column=1, padx=5, pady=5, sticky=tk.W)
+start_stop_label = tk.Label(root, text="Screen Cast:")
+start_stop_label.grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
+start_button = tk.Button(root, text="Start", command=start_scrcpy)
+start_button.grid(row=4, column=1, padx=5, pady=5, sticky=tk.W)
+stop_button = tk.Button(root, text="Stop", command=stop_scrcpy)
+stop_button.grid(row=4, column=2, padx=5, pady=5, sticky=tk.W)
 
 # Device Selection
 device_type_var = tk.StringVar(value="Other")
-# device_type_label = tk.Label(root, text="Device Type:")
-# device_type_label.grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
+device_type_label = tk.Label(root, text="Device Type:")
+device_type_label.grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
 quest_2_radio = tk.Radiobutton(root, text="Quest 2", variable=device_type_var, value="Quest 2")
-quest_2_radio.grid(row=5, column=0, sticky=tk.W)
+quest_2_radio.grid(row=5, column=1, sticky=tk.W)
 quest_3_radio = tk.Radiobutton(root, text="Quest 3", variable=device_type_var, value="Quest 3")
-quest_3_radio.grid(row=5, column=1, sticky=tk.W)
+quest_3_radio.grid(row=6, column=1, sticky=tk.W)
 quest_pro_radio = tk.Radiobutton(root, text="Quest Pro", variable=device_type_var, value="Quest Pro")
-quest_pro_radio.grid(row=5, column=2, sticky=tk.W)
+quest_pro_radio.grid(row=7, column=1, sticky=tk.W)
 other_radio = tk.Radiobutton(root, text="Other", variable=device_type_var, value="Other")
-other_radio.grid(row=5, column=3, sticky=tk.W)
+other_radio.grid(row=8, column=1, sticky=tk.W)
 
 # Buttons for enabling and disabling the proximity sensor
+# if device_type_var.get() in ["Quest 2", "Quest 3", "Quest Pro"]:
 proximity_sensor_button = Button(root, text="Enable Proximity Sensor", command=enable_proximity_sensor)
-proximity_sensor_button.grid(row=6, column=0, padx=5, pady=5)
+proximity_sensor_button.grid(row=5, column=2, padx=5, pady=5)
 
 disable_proximity_sensor_button = Button(root, text="Disable Proximity Sensor", command=disable_proximity_sensor)
 disable_proximity_sensor_button.grid(row=6, column=2, padx=5, pady=5)
 
+# Log Message
+log_label = tk.Label(root, text="Initializing ADB...")
+log_label.grid(row=9, column=0, columnspan=3, padx=5, pady=5)
 
 # Adjust the grid configuration
 root.grid_columnconfigure (1, weight=1)
