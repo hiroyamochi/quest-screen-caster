@@ -10,6 +10,7 @@ This GUI is specifically designed for Meta Quest devices.
 - Simple GUI of scrcpy
 - Mirror multiple devices simultaneously
 - Adjust screen size for Quest devices
+- Toggle proximity sensor
 
 <!--
 ## Prerequisites
