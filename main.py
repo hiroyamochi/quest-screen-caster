@@ -18,8 +18,9 @@ def find_application_directory():
     print(application_path)
     return application_path
 
-# path to scrcpy.exe
+# path to exe
 scrcpy_path = os.path.join(find_application_directory(), "scrcpy", "scrcpy.exe")
+adb_path = os.path.join(find_application_directory(), "scrcpy", "adb.exe")
 
 # Load config
 def load_config():
@@ -36,7 +37,7 @@ casting_devices = {}
 
 def initialize_adb():
     # adb kill-serverを実行
-    subprocess.run(["adb", "kill-server"])
+    subprocess.run([adb_path, "kill-server"])
     # Notify the GUI that the initialization is complete
     get_device_details_async()
 
@@ -117,7 +118,7 @@ device_serials = {}
 
 def get_device_details_async():
     def get_device_details():
-        result = subprocess.run(["adb", "devices", "-l"], capture_output=True, text=True)
+        result = subprocess.run([adb_path, "devices", "-l"], capture_output=True, text=True)
         lines = result.stdout.splitlines()
         devices = []
         for line in lines[1:]:  # Skip the first line
@@ -152,12 +153,12 @@ def get_device_details_async():
 def disable_proximity_sensor():
     device_name = serial_var.get().split()[0]
     serial = device_serials[device_name]
-    subprocess.run(["adb", "-s", serial, "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.prox_close"])
+    subprocess.run([adb_path, "-s", serial, "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.prox_close"])
 
 def enable_proximity_sensor():
     device_name = serial_var.get().split()[0]
     serial = device_serials[device_name]
-    subprocess.run(["adb", "-s", serial, "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.automation_disable"])
+    subprocess.run([adb_path, "-s", serial, "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.automation_disable"])
 
 
 # Create Tkinter window
