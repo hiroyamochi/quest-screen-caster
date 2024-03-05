@@ -6,6 +6,12 @@ This GUI is specifically designed for Meta Quest devices.
 
 ![GUI image](./img/showcase.png)
 
+## Features
+- Simple GUI of scrcpy
+- Mirror multiple devices simultaneously
+- Adjust screen size for Quest devices
+
+<!--
 ## Prerequisites
 
 - Python 3
@@ -13,6 +19,7 @@ This GUI is specifically designed for Meta Quest devices.
 - [ADB](https://developer.android.com/studio/command-line/adb) (Android Debug Bridge)
   - ADB path should be set in system variable
 - Only works with Windows
+-->
 
 ## Usage
 - Get [Scrcpy](https://github.com/Genymobile/scrcpy)
