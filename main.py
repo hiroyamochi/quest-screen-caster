@@ -10,10 +10,12 @@ import sys
 def find_application_directory():
     if getattr(sys, 'frozen', False):
         # If frozen (in built executable), the path to scrcpy.exe is in same directory as executable
-        application_path = sys._MEIPASS
+        application_path = os.path.dirname(sys.executable)
     else:
         # If not frozen (dev environment), the path to scrcpy.exe is in the scrcpy directory
         application_path = os.path.dirname(os.path.abspath(__file__))
+    
+    print(application_path)
     return application_path
 
 # path to scrcpy.exe
@@ -70,6 +72,7 @@ def start_scrcpy():
     elif device_type == "Other":
         pass
         
+    print(command)
     process = subprocess.Popen(
         command,
         creationflags=subprocess.CREATE_NO_WINDOW
@@ -164,9 +167,18 @@ root.title("Scrcpy GUI for Quest")
 root.geometry("600x400")  # Set window size
 
 # Set icon
-icon_path = os.path.join(find_application_directory(), "icon.ico")
-root.iconbitmap(icon_path)
+def set_icon():
+    if getattr(sys, 'frozen', False):
+        # If frozen (in built executable), the path to scrcpy.exe is in same directory as executable
+        application_path = sys._MEIPASS
+    else:
+        # If not frozen (dev environment), the path to scrcpy.exe is in the scrcpy directory
+        application_path = os.path.dirname(os.path.abspath(__file__))
 
+    icon_path = os.path.join(application_path, "icon.ico")
+    root.iconbitmap(icon_path)
+
+set_icon()
 
 # Set font
 if 'win' in root.tk.call('tk', 'windowingsystem'):
