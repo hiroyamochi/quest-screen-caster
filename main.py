@@ -9,16 +9,16 @@ import sys
 
 def find_application_directory():
     if getattr(sys, 'frozen', False):
-        # If frozen (in built executable), the path to scrcpy.exe is in same directory as executable
+        # If frozen (in built executable)
         application_path = os.path.dirname(sys.executable)
     else:
-        # If not frozen (dev environment), the path to scrcpy.exe is in the scrcpy directory
+        # If not frozen (dev environment)
         application_path = os.path.dirname(os.path.abspath(__file__))
     
     print(application_path)
     return application_path
 
-# path to exe
+# Path to exe
 scrcpy_path = os.path.join(find_application_directory(), "scrcpy", "scrcpy.exe")
 adb_path = os.path.join(find_application_directory(), "scrcpy", "adb.exe")
 
@@ -37,7 +37,7 @@ casting_devices = {}
 
 def initialize_adb():
     # adb kill-serverを実行
-    subprocess.run([adb_path, "kill-server"])
+    subprocess.run([adb_path, "kill-server"], creationflags=subprocess.CREATE_NO_WINDOW)
     # Notify the GUI that the initialization is complete
     get_device_details_async()
 
@@ -118,7 +118,12 @@ device_serials = {}
 
 def get_device_details_async():
     def get_device_details():
-        result = subprocess.run([adb_path, "devices", "-l"], capture_output=True, text=True)
+        result = subprocess.run(
+            [adb_path, "devices", "-l"], 
+            capture_output=True, 
+            text=True, 
+            creationflags=subprocess.CREATE_NO_WINDOW
+            )
         lines = result.stdout.splitlines()
         devices = []
         for line in lines[1:]:  # Skip the first line
