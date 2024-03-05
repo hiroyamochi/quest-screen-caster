@@ -9,10 +9,10 @@ import sys
 
 def find_application_directory():
     if getattr(sys, 'frozen', False):
-        # If frozen (in built executable)
+        # In built executable
         application_path = os.path.dirname(sys.executable)
     else:
-        # If not frozen (dev environment)
+        # In dev environment
         application_path = os.path.dirname(os.path.abspath(__file__))
     
     print(application_path)
@@ -175,10 +175,10 @@ root.geometry("600x400")  # Set window size
 # Set icon
 def set_icon():
     if getattr(sys, 'frozen', False):
-        # If frozen (in built executable), the path to scrcpy.exe is in same directory as executable
+        # In built executable
         application_path = sys._MEIPASS
     else:
-        # If not frozen (dev environment), the path to scrcpy.exe is in the scrcpy directory
+        # In dev environment
         application_path = os.path.dirname(os.path.abspath(__file__))
 
     icon_path = os.path.join(application_path, "icon.ico")
@@ -188,7 +188,7 @@ set_icon()
 
 # Set font
 if 'win' in root.tk.call('tk', 'windowingsystem'):
-    font = ("MS Gothic", 12)
+    font = ("Meiryo", 12)
 else:
     font = ("Noto Sans CJK JP", 12)
 
