@@ -4,6 +4,5 @@ dist/
 
 .python-version
 
-scrcpy/
 
 *.exe

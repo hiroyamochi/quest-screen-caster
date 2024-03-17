@@ -20,7 +20,7 @@ def find_application_directory():
 
 # Path to exe
 scrcpy_path = os.path.join(find_application_directory(), "scrcpy", "scrcpy.exe")
-adb_path = os.path.join(find_application_directory(), "scrcpy", "adb.exe")
+adb_path = os.path.join(find_application_directory(), "android-platform-tools", "adb.exe")
 
 # Load config
 def load_config():
@@ -67,9 +67,10 @@ def start_scrcpy():
     if device_type == "Quest 2":
         command.append("--crop=1450:1450:140:140")
     elif device_type == "Quest 3":
-        command.append("--crop=1650:1650:300:300") # Consider later
+        command.append("--crop=1650:1650:300:300") # Consider later about specific crop value
+        command.append("--rotation-offset=-30")
     elif device_type == "Quest Pro":
-        command.append("--crop=2064:2208:2064:100") # Consider later
+        command.append("--crop=2064:2208:2064:100") # Consider later about specific crop value
     elif device_type == "Other":
         pass
         
