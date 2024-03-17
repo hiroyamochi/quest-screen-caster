@@ -23,17 +23,9 @@ This GUI is specifically designed for Meta Quest devices.
 -->
 
 ## Usage
-- Get [Scrcpy](https://github.com/Genymobile/scrcpy)
-- Rename scrcpy folder to `scrcpy` (a folder where scrcpy.exe exists)
-- Download screen-caster-quest.exe from [release page](https://github.com/hiroyamochi/quest-screen-caster/releases/latest)
-- Directory should be like below:
-```
-screen-caster-quest
-├ screen-caster-quest.exe
-├ config.ini
-└ scrcpy
-　 └ scrcpy.exe
-```
+- Download latest zip file from [release page](https://github.com/hiroyamochi/quest-screen-caster/releases/latest)
+- Unpack downloaded zip file
+- Launch screen-caster-quest.zip
 
 ## Build
 - You will need `pyinstaller` to build a binary file (.exe)
