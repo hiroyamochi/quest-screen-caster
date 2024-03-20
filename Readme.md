@@ -25,7 +25,7 @@ This GUI is specifically designed for Meta Quest devices.
 ## Usage
 - Download latest zip file from [release page](https://github.com/hiroyamochi/quest-screen-caster/releases/latest)
 - Unpack downloaded zip file
-- Launch screen-caster-quest.zip
+- Launch screen-caster-quest.exe
 
 ## Build
 - You will need `pyinstaller` to build a binary file (.exe)
