@@ -3,3 +3,5 @@ dist/
 *.spec
 
 .python-version
+
+screen-caster-quest.exe
