@@ -12,15 +12,15 @@ def find_application_directory():
         application_path = os.path.dirname(sys.executable)
     else:
         # In dev environment
-        application_path = os.path.dirname(os.path.abspath(__file__))
+        application_path = os.path.dirname(__file__)
     
-    print(f'app path: {application_path}')
     return application_path
 
 # Path to exe
 scrcpy_path = os.path.join(find_application_directory(), "scrcpy-mod-by-vuisme", "scrcpy.exe")
 adb_path = os.path.join(find_application_directory(), "scrcpy-mod-by-vuisme", "adb.exe")
 
+print(f'app path: {find_application_directory()}')
 print(f'scrcpy_path: {scrcpy_path}')
 
 # Load config
