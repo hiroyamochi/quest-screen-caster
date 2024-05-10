@@ -12,15 +12,12 @@ This GUI is specifically designed for Meta Quest devices.
 - Adjust screen size for Quest devices
 - Toggle proximity sensor
 
-<!--
+
 ## Prerequisites
 
 - Python 3
-- [Scrcpy](https://github.com/Genymobile/scrcpy)
-- [ADB](https://developer.android.com/studio/command-line/adb) (Android Debug Bridge)
-  - ADB path should be set in system variable
+  - `flet` Library is required.
 - Only works with Windows
--->
 
 ## Usage
 - Download latest zip file from [release page](https://github.com/hiroyamochi/quest-screen-caster/releases/latest)
@@ -28,7 +25,7 @@ This GUI is specifically designed for Meta Quest devices.
 - Launch screen-caster-quest.exe
 
 ## Build
-- You will need `flet` to build a binary file (.exe)
+- You will need `pyinstaller` to build a binary file (.exe)
 - Run following in the project directory:
 ```bash
 pyinstaller main.py -F -w --icon "icon.ico;." --add-data "icon.ico;." --name screen-caster-quest
