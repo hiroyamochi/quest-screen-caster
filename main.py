@@ -133,12 +133,12 @@ def main(page: ft.Page):
     
     reset_adb
 
-    def stop_all_casts():
+    def on_app_exit():
         for device in casting_devices.values():
             if device['process'] is not None or device['process'].poll() is None:
                 device['process'].terminate()
 
-    atexit.register(stop_all_casts)
+    atexit.register(on_app_exit)
 
     def start_scrcpy(e):
         nonlocal casting_devices
@@ -156,7 +156,7 @@ def main(page: ft.Page):
         print(f'serial: {serial_number}')
 
         command = [scrcpy_path, '-s', serial_number, '-m', '1024']
-        # command.append('--window-title=' + device_name)
+        command.append('--window-title=' + device_name)
         if serial_number != "None":
             if no_video == True:
                 command.append('--no-video')
@@ -180,6 +180,7 @@ def main(page: ft.Page):
             if serial_number in casting_devices: # Check if device is already casting
                 if casting_devices[serial_number]['process'] is not None or casting_devices[serial_number]['process'].poll() is None:
                     print("プロセスを停止")
+                    enable_proximity_sensor(None)
                     casting_devices[serial_number]['process'].terminate()
                     connect_btn.icon = ft.icons.PLAY_ARROW
                     connect_btn.text = "接続"
