@@ -5,6 +5,8 @@ import os
 import sys
 import configparser
 import re
+import atexit
+
 
 def find_application_directory():
     if getattr(sys, 'frozen', False):
@@ -22,6 +24,7 @@ adb_path = os.path.join(find_application_directory(), "scrcpy-mod-by-vuisme", "a
 
 print(f'app path: {find_application_directory()}')
 print(f'scrcpy_path: {scrcpy_path}')
+print(f'adb_path: {adb_path}')
 
 # Load config
 def load_config():
@@ -82,6 +85,13 @@ def main(page: ft.Page):
             connect_btn.icon = ft.icons.PLAY_ARROW
             connect_btn.text = "接続"
 
+        if "Quest_2" in device_name:
+            models.value = "Quest 2"
+            models.update()
+        elif "Quest_3" in device_name:
+            models.value = "Quest 3"
+            models.update()
+
         connect_btn.update()
 
     def load_device(e):
@@ -117,11 +127,18 @@ def main(page: ft.Page):
             return None
         return serial_number
 
-    def reset_scrcpy(e):
+    def reset_adb(e):
         subprocess.run([adb_path, "kill-server"])
         subprocess.run([adb_path, "start-server"])
     
-    reset_scrcpy
+    reset_adb
+
+    def stop_all_casts():
+        for device in casting_devices.values():
+            if device['process'] is not None or device['process'].poll() is None:
+                device['process'].terminate()
+
+    atexit.register(stop_all_casts)
 
     def start_scrcpy(e):
         nonlocal casting_devices
@@ -138,7 +155,8 @@ def main(page: ft.Page):
         
         print(f'serial: {serial_number}')
 
-        command = [scrcpy_path, '-s', serial_number, '-m', '1024', '--window-borderless']
+        command = [scrcpy_path, '-s', serial_number, '-m', '1024']
+        # command.append('--window-title=' + device_name)
         if serial_number != "None":
             if no_video == True:
                 command.append('--no-video')
@@ -155,7 +173,7 @@ def main(page: ft.Page):
             elif device_model == "Quest 3":
                 command.append('--crop=2064:2208:2064:100')
                 command.append('--rotation-offset=-22')
-                command.append('--scale=180')
+                command.append('--scale=190')
                 command.append('--position-x-offset=-520')
                 command.append('--position-y-offset=-490')
             
@@ -169,7 +187,7 @@ def main(page: ft.Page):
                     del casting_devices[serial_number]
             else: # Start casting 
                 print("プロセスを開始")
-                process = subprocess.Popen(command)
+                process = subprocess.Popen(command, creationflags=subprocess.CREATE_NO_WINDOW)
                 casting_devices[serial_number] = {'process': process, 'connect': True}
                 connect_btn.icon = ft.icons.STOP
                 connect_btn.text = "切断"
@@ -199,7 +217,7 @@ def main(page: ft.Page):
         options=[
           ft.dropdown.Option("Quest 2"),
           ft.dropdown.Option("Quest 3"),
-          ft.dropdown.Option("Quest Pro"),
+          # ft.dropdown.Option("Quest Pro"),
           ft.dropdown.Option("Other (No Crop)")
         ],
         value="Quest 2"
@@ -225,9 +243,13 @@ def main(page: ft.Page):
     enable_proximity = ft.TextButton(text='有効にする', icon=ft.icons.REMOVE_RED_EYE, on_click=enable_proximity_sensor)
     disable_proximity = ft.TextButton(text='無効にする', icon=ft.icons.REMOVE_RED_EYE_OUTLINED, on_click=disable_proximity_sensor)
 
+    reset_adb_button = ft.TextButton("ADBをリセット", on_click=reset_adb, icon=ft.icons.REFRESH, style=ft.ButtonStyle(color=ft.colors.RED))
+
     column_proximity = ft.Row([enable_proximity, disable_proximity], spacing=10)
 
-    page.add(title, select_device, select_model, connect_btn, options, label_proximity, column_proximity)
+    page.add(title, select_device, select_model, connect_btn, options, label_proximity, column_proximity, reset_adb_button)
+
 
 if __name__ == "__main__":
     ft.app(main)
+

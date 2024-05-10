@@ -182,8 +182,8 @@ def set_icon():
         # In dev environment
         application_path = os.path.dirname(os.path.abspath(__file__))
 
-    icon_path = os.path.join(application_path, "icon.ico")
-    root.iconbitmap(icon_path)
+    # icon_path = os.path.join(application_path, "icon.ico")
+    # root.iconbitmap(icon_path)
 
 set_icon()
 

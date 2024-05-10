@@ -28,10 +28,10 @@ This GUI is specifically designed for Meta Quest devices.
 - Launch screen-caster-quest.exe
 
 ## Build
-- You will need `pyinstaller` to build a binary file (.exe)
+- You will need `flet` to build a binary file (.exe)
 - Run following in the project directory:
 ```bash
-pyinstaller main.py --onefile --windowed --icon=icon.ico --add-data "icon.ico;." --name screen-caster-quest
+pyinstaller main.py -F -w --icon "icon.ico;." --add-data "icon.ico;." --name screen-caster-quest
 ```
 
 ## Configuration
