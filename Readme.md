@@ -4,7 +4,7 @@ A simple GUI for [Scrcpy](https://github.com/Genymobile/scrcpy), a tool for disp
 
 This GUI is specifically designed for Meta Quest devices.
 
-![GUI image](./img/showcase.png)
+![GUI image](./img/showcase_flet.png)
 
 ## Features
 - Simple GUI of scrcpy
