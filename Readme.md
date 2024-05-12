@@ -28,7 +28,7 @@ This GUI is specifically designed for Meta Quest devices.
 - You will need `pyinstaller` to build a binary file (.exe)
 - Run following in the project directory:
 ```bash
-pyinstaller main.py -F -w --icon "icon.ico;." --add-data "icon.ico;." --name screen-caster-quest
+pyinstaller main.py --onefile -w --icon=icon.ico --add-data "icon.ico;." --add-data "scrcpy-mod-by-vuisme:scrcpy-mod-by-vuisme" --name screen-caster-quest
 ```
 
 ## Configuration

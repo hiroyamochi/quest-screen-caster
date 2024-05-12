@@ -11,7 +11,7 @@ import atexit
 def find_application_directory():
     if getattr(sys, 'frozen', False):
         # In built executable
-        application_path = os.path.dirname(sys.executable)
+        application_path = sys._MEIPASS
     else:
         # In dev environment
         application_path = os.path.dirname(__file__)
