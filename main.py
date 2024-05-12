@@ -1,26 +1,30 @@
-import tkinter as tk
-from tkinter import Button
+import flet as ft
 import subprocess
+import time
 import os
-import threading
-import configparser
 import sys
+import configparser
+import re
+import atexit
 
 
 def find_application_directory():
     if getattr(sys, 'frozen', False):
         # In built executable
-        application_path = os.path.dirname(sys.executable)
+        application_path = sys._MEIPASS
     else:
         # In dev environment
-        application_path = os.path.dirname(os.path.abspath(__file__))
+        application_path = os.path.dirname(__file__)
     
-    print(application_path)
     return application_path
 
 # Path to exe
 scrcpy_path = os.path.join(find_application_directory(), "scrcpy-mod-by-vuisme", "scrcpy.exe")
 adb_path = os.path.join(find_application_directory(), "scrcpy-mod-by-vuisme", "adb.exe")
+
+print(f'app path: {find_application_directory()}')
+print(f'scrcpy_path: {scrcpy_path}')
+print(f'adb_path: {adb_path}')
 
 # Load config
 def load_config():
@@ -33,238 +37,220 @@ config = load_config()
 default_bitrate = config.getint('scrcpy', 'bitrate', fallback=20)
 default_size = config.getint('scrcpy', 'size', fallback=1024)
 
-casting_devices = {}
 
-def initialize_adb():
-    # adb kill-serverを実行
-    subprocess.run([adb_path, "kill-server"], creationflags=subprocess.CREATE_NO_WINDOW)
-    # Notify the GUI that the initialization is complete
-    get_device_details_async()
+def get_connected_devices():
+    devices_info = {}
+    result = subprocess.run([adb_path, "devices", "-l"], capture_output=True, text=True)
+    if result.returncode == 0:
+        for match in re.finditer(r'(\S+)\s+device .+ model:(\S+)\s+', result.stdout):
+            serial_number = match.group(1)
+            device_name = match.group(2)
+            devices_info[serial_number] = device_name
+    return devices_info
 
-def start_scrcpy():
-    global casting_devices
 
-    # Set options
-    device_name = serial_var.get().split()[0]
-    serial = device_serials[device_name]
-    size = size_entry.get()
-    bitrate = bitrate_entry.get() or default_bitrate
-    screen_off = screen_off_var.get()
-    title = f"Scrcpy for Quest - {serial}"
-    device_type = device_type_var.get()
+def main(page: ft.Page):
+    page.title = "Screen Caster for Quest"
+    page.padding = 24
+    page.window_min_height = 150
+    page.window_min_width = 200
+    page.window_height = 500
+    page.window_width = 600
+    page.theme_mode = ft.ThemeMode.SYSTEM
 
-    # Construct the command
-    command = [scrcpy_path, "-s", serial, "--no-audio"]
-    if size:
-        command.extend(["--max-size", size])
-    if bitrate:
-        command.extend(["--video-bit-rate", str(bitrate)+"M"])
-    if screen_off:
-        command.append("--power-off-on-close")
-    if title:
-        command.extend(["--window-title", title])
-    
-    if device_type == "Quest 2":
-        command.append("--crop=1450:1450:140:140")
-    elif device_type == "Quest 3":
-        command.append("--crop=1650:1650:300:300") # Consider later about specific crop value
-        command.append("--rotation-offset=30")
-    elif device_type == "Quest Pro":
-        command.append("--crop=2064:2208:2064:100") # Consider later about specific crop value
-    elif device_type == "Other":
-        pass
-        
-    print(command)
-    process = subprocess.Popen(
-        command,
-        creationflags=subprocess.CREATE_NO_WINDOW
-        )
+    casting_devices = {}
 
-    casting_devices[serial] = process
+    def check_av(e):
+        if noaudio.value == True:
+            novideo.value = False
+            novideo.update()
+        elif novideo.value == True:
+            noaudio.value = False
+            noaudio.update()
 
-    # Start a separate thread to wait for the process to finish and output any errors
-    threading.Thread(target=monitor_casting, args=(serial,)).start()
+    def on_device_change(e):
+        nonlocal casting_devices
 
-def monitor_casting(serial):
-    global casting_devices
+        device_name = str(device_dd.value)
+        serial_number = get_serial_number(device_name)
 
-    # Wait for the process to finish
-    process = casting_devices[serial]
-    stdout, _ = process.communicate()  # This will also capture stderr because of the redirection
-
-    # Print the output, which includes stderr
-    # print(stdout.decode())
-
-    # Remove the process from the dictionary
-    del casting_devices[serial]
-
-    print("Casting finished.")
-
-def stop_scrcpy():
-    global casting_devices
-
-    # Get the serial number from the device_serials dictionary
-    device_name = serial_var.get().split()[0]
-    serial = device_serials[device_name]
-    if serial not in casting_devices:
-        print("No casting found for the selected device.")
-        return
-
-    process = casting_devices[serial]
-    process.terminate()
-    del casting_devices[serial]
-    print(f"Casting stopped for device: {device_name}")
-
-device_serials = {}
-
-def get_device_details_async():
-    def get_device_details():
-        result = subprocess.run(
-            [adb_path, "devices", "-l"], 
-            capture_output=True, 
-            text=True, 
-            creationflags=subprocess.CREATE_NO_WINDOW
-            )
-        lines = result.stdout.splitlines()
-        devices = []
-        for line in lines[1:]:  # Skip the first line
-            if "device" in line:
-                parts = line.split()
-                serial = parts[0]
-                details = " ".join(parts[1:])
-                # Extract the model name
-                model = [s for s in details.split() if "model:" in s][0].replace("model:", "")
-                devices.append(model)
-                device_serials[model] = serial  # Store the serial number
-        
-        # Update the dropdown menu with the found devices
-        device_label = f"{devices[0]} ({device_serials[devices[0]]})" if devices else ""
-        serial_var.set(device_label)
-        serial_menu["menu"].delete(0, "end")
-        for device in devices:
-            serial = device_serials[device]
-            label = f"{device} ({serial})"
-            serial_menu["menu"].add_command(label=label, command=tk._setit(serial_var, label))
-        
-        get_button.config(state="normal")  # Re-enable the button
-        if devices:
-            log_label.config(text="Device ready.")
+        if serial_number in casting_devices:
+            if casting_devices[serial_number]['process'] is not None or casting_devices[serial_number]['process'].poll() is None:
+                connect_btn.icon = ft.icons.STOP
+                connect_btn.text = "切断"
+            else:
+                connect_btn.icon = ft.icons.PLAY_ARROW
+                connect_btn.text = "接続"
         else:
-            log_label.config(text="No devices found.")
+            connect_btn.icon = ft.icons.PLAY_ARROW
+            connect_btn.text = "接続"
 
-    get_button.config(state="disabled")  # Disable the button while fetching the devices
-    threading.Thread(target=get_device_details).start()
+        if "Quest_2" in device_name:
+            models.value = "Quest 2"
+            models.update()
+        elif "Quest_3" in device_name:
+            models.value = "Quest 3"
+            models.update()
+
+        connect_btn.update()
+
+    def load_device(e):
+        connected_devices = get_connected_devices()
+
+        print(f'connected_devices: {connected_devices}')
+
+        options = [
+            ft.dropdown.Option(text=f"{name} ({serial})") 
+            for serial, name 
+            in connected_devices.items()
+            ]
+        device_dd.options = options
+        page.update()
+
+    def disable_proximity_sensor(e):
+        device_name = str(device_dd.value)
+        serial = get_serial_number(device_name)
+        subprocess.run([adb_path, "-s", serial, "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.prox_close"])
+  
+    def enable_proximity_sensor(e):
+        device_name = str(device_dd.value)
+        serial = get_serial_number(device_name)
+        subprocess.run([adb_path, "-s", serial, "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.automation_disable"])
+
+    def get_serial_number(device_name):
+        # get serial number from device name menu
+        serial_number_match = re.search(r'\((.*?)\)', device_name)
+        if serial_number_match:
+            serial_number = serial_number_match.group(1)
+        else:
+            print("シリアル番号が見つかりません")
+            return None
+        return serial_number
+
+    def reset_adb(e):
+        subprocess.run([adb_path, "kill-server"])
+        subprocess.run([adb_path, "start-server"])
+    
+    reset_adb
+
+    def on_app_exit():
+        for device in casting_devices.values():
+            if device['process'] is not None or device['process'].poll() is None:
+                device['process'].terminate()
+
+    atexit.register(on_app_exit)
+
+    def start_scrcpy(e):
+        nonlocal casting_devices
+
+        no_video = novideo.value
+        no_audio = noaudio.value
+        bitrate_value = bitrate.value
+        audio_s = audiosource.value
+
+        device_model = models.value
+
+        device_name = str(device_dd.value)
+        serial_number = get_serial_number(device_name)
+        
+        print(f'serial: {serial_number}')
+
+        command = [scrcpy_path, '-s', serial_number, '-m', '1024']
+        command.append('--window-title=' + device_name)
+        if serial_number != "None":
+            if no_video == True:
+                command.append('--no-video')
+            if no_audio == True:
+                command.append('--no-audio')
+            if bitrate_value:
+                command.append('-b' + str(bitrate_value) + 'M')
+            if audio_s is None and audio_s == "内部音声":
+                pass
+            elif audio_s == "マイク":
+                command.append('--audio-source=mic')
+            if device_model == "Quest 2":
+                command.append("--crop=1450:1450:140:140")
+            elif device_model == "Quest 3":
+                command.append('--crop=2064:2208:2064:100')
+                command.append('--rotation-offset=-22')
+                command.append('--scale=190')
+                command.append('--position-x-offset=-520')
+                command.append('--position-y-offset=-490')
+            
+            if serial_number in casting_devices: # Check if device is already casting
+                if casting_devices[serial_number]['process'] is not None or casting_devices[serial_number]['process'].poll() is None:
+                    print("プロセスを停止")
+                    enable_proximity_sensor(None)
+                    casting_devices[serial_number]['process'].terminate()
+                    connect_btn.icon = ft.icons.PLAY_ARROW
+                    connect_btn.text = "接続"
+                    connect_btn.update()
+                    del casting_devices[serial_number]
+            else: # Start casting 
+                print("プロセスを開始")
+                process = subprocess.Popen(command, creationflags=subprocess.CREATE_NO_WINDOW)
+                casting_devices[serial_number] = {'process': process, 'connect': True}
+                connect_btn.icon = ft.icons.STOP
+                connect_btn.text = "切断"
+                connect_btn.update()
+        else:
+            connect_btn.text = "デバイスを選択してください"
+            connect_btn.icon = ft.icons.ERROR
+            connect_btn.update()
+            time.sleep(2)
+            connect_btn.text = "接続"
+            connect_btn.icon = ft.icons.PLAY_ARROW
+            connect_btn.update()
+    
+    title = ft.Text("Screen Caster for Quest", style=ft.TextThemeStyle.TITLE_MEDIUM,size=20)
+
+    device_dd = ft.Dropdown(label="デバイス", expand=True, options=[], value=None, on_change=on_device_change)
+
+    connect_btn = ft.FloatingActionButton(icon=ft.icons.PLAY_ARROW, text="接続", on_click=start_scrcpy)
+
+    select_device = ft.Row([
+        device_dd,
+        ft.FilledButton("読み込み", icon=ft.icons.REFRESH, on_click=load_device)
+    ], expand=0)
+
+    models = ft.Dropdown(
+        label="モデル", 
+        options=[
+          ft.dropdown.Option("Quest 2"),
+          ft.dropdown.Option("Quest 3"),
+          # ft.dropdown.Option("Quest Pro"),
+          ft.dropdown.Option("Other (No Crop)")
+        ],
+        value="Quest 2"
+        )
+    
+    select_model = ft.Row([models])
+
+    novideo = ft.Switch(label="画面をキャストしない", value=False, expand=True, on_change=check_av)
+
+    noaudio = ft.Switch(label="音声をキャストしない", value=True, expand=True, on_change=check_av)
+
+    nosource = ft.Row([novideo,noaudio])
+
+    bitrate = ft.TextField(label="映像ビットレート (推奨: 20Mbps)",suffix_text="Mbps", value=default_bitrate)
+
+    audiosource = ft.Dropdown(label="オーディオソース", options=[ft.dropdown.Option("端末内部"),ft.dropdown.Option("マイク")])
+
+    options = ft.Column([
+        nosource,bitrate
+    ], spacing=10)
+
+    label_proximity = ft.Text("近接センサ (無効にすると装着時以外も画面が点灯する)", style=ft.TextThemeStyle.TITLE_SMALL, size=15)
+    enable_proximity = ft.TextButton(text='有効にする', icon=ft.icons.REMOVE_RED_EYE, on_click=enable_proximity_sensor)
+    disable_proximity = ft.TextButton(text='無効にする', icon=ft.icons.REMOVE_RED_EYE_OUTLINED, on_click=disable_proximity_sensor)
+
+    reset_adb_button = ft.TextButton("ADBをリセット", on_click=reset_adb, icon=ft.icons.REFRESH, style=ft.ButtonStyle(color=ft.colors.RED))
+
+    column_proximity = ft.Row([enable_proximity, disable_proximity], spacing=10)
+
+    page.add(title, select_device, select_model, connect_btn, options, label_proximity, column_proximity, reset_adb_button)
 
 
-def disable_proximity_sensor():
-    device_name = serial_var.get().split()[0]
-    serial = device_serials[device_name]
-    subprocess.run([adb_path, "-s", serial, "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.prox_close"])
+if __name__ == "__main__":
+    ft.app(main)
 
-def enable_proximity_sensor():
-    device_name = serial_var.get().split()[0]
-    serial = device_serials[device_name]
-    subprocess.run([adb_path, "-s", serial, "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.automation_disable"])
-
-
-# Create Tkinter window
-root = tk.Tk()
-root.title("Scrcpy GUI for Quest")
-# root.resizable(False, False)  # Disable window resizing
-root.geometry("600x400")  # Set window size
-
-# Set icon
-def set_icon():
-    if getattr(sys, 'frozen', False):
-        # In built executable
-        application_path = sys._MEIPASS
-    else:
-        # In dev environment
-        application_path = os.path.dirname(os.path.abspath(__file__))
-
-    icon_path = os.path.join(application_path, "icon.ico")
-    root.iconbitmap(icon_path)
-
-set_icon()
-
-# Set font
-if 'win' in root.tk.call('tk', 'windowingsystem'):
-    font = ("Meiryo", 12)
-else:
-    font = ("Noto Sans CJK JP", 12)
-
-### Create widgets ###
-
-# Serial number input and Get button
-serial_label = tk.Label(root, text="Device:")
-serial_label.grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-serial_var = tk.StringVar()
-serial_menu = tk.OptionMenu(root, serial_var, "")
-serial_menu.grid(row=0, column=1, sticky=tk.EW)
-get_button = tk.Button(root, text="Get", command=get_device_details_async)
-get_button.grid(row=0, column=2)
-
-# Mirroring window size specification
-size_label = tk.Label(root, text="Screen Size (e.g., 1024):")
-size_label.grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-size_entry = tk.Entry(root, width=15)
-size_entry.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=5)
-size_entry.insert(0, str(default_size))  # Insert default size
-
-# Bitrate specification
-bitrate_label = tk.Label(root, text="Bitrate (Mbps):")
-bitrate_label.grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
-bitrate_entry = tk.Entry(root, width=15)
-bitrate_entry.grid(row=2, column=1, sticky=tk.EW, padx=5, pady=5)
-bitrate_entry.insert(0, str(default_bitrate))  # Insert default bitrate
-
-# Screen off feature when disconnecting
-screen_off_var = tk.BooleanVar()
-screen_off_var.set(False)
-screen_off_checkbox = tk.Checkbutton(root, text="Turn off screen when disconnecting", variable=screen_off_var)
-screen_off_checkbox.grid(row=3, column=0, sticky=tk.W, padx=5, pady=5, columnspan=2)
-
-# Start/Stop mirroring buttons
-start_stop_label = tk.Label(root, text="Screen Cast:")
-start_stop_label.grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
-start_button = tk.Button(root, text="Start", command=start_scrcpy)
-start_button.grid(row=4, column=1, padx=5, pady=5, sticky=tk.W)
-stop_button = tk.Button(root, text="Stop", command=stop_scrcpy)
-stop_button.grid(row=4, column=2, padx=5, pady=5, sticky=tk.W)
-
-# Device Selection
-device_type_var = tk.StringVar(value="Other")
-device_type_label = tk.Label(root, text="Device Type:")
-device_type_label.grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
-quest_2_radio = tk.Radiobutton(root, text="Quest 2", variable=device_type_var, value="Quest 2")
-quest_2_radio.grid(row=5, column=1, sticky=tk.W)
-quest_3_radio = tk.Radiobutton(root, text="Quest 3", variable=device_type_var, value="Quest 3")
-quest_3_radio.grid(row=6, column=1, sticky=tk.W)
-quest_pro_radio = tk.Radiobutton(root, text="Quest Pro", variable=device_type_var, value="Quest Pro")
-quest_pro_radio.grid(row=7, column=1, sticky=tk.W)
-other_radio = tk.Radiobutton(root, text="Other", variable=device_type_var, value="Other")
-other_radio.grid(row=8, column=1, sticky=tk.W)
-
-# Buttons for enabling and disabling the proximity sensor
-# if device_type_var.get() in ["Quest 2", "Quest 3", "Quest Pro"]:
-proximity_sensor_button = Button(root, text="Enable Proximity Sensor", command=enable_proximity_sensor)
-proximity_sensor_button.grid(row=5, column=2, padx=5, pady=5)
-
-disable_proximity_sensor_button = Button(root, text="Disable Proximity Sensor", command=disable_proximity_sensor)
-disable_proximity_sensor_button.grid(row=6, column=2, padx=5, pady=5)
-
-# Log Message
-log_label = tk.Label(root, text="Initializing ADB...")
-log_label.grid(row=9, column=0, columnspan=3, padx=5, pady=5)
-
-# Adjust the grid configuration
-root.grid_columnconfigure (1, weight=1)
-root.grid_columnconfigure (2, weight=1)
-root.grid_columnconfigure (3, weight=1)
-root.grid_columnconfigure (4, weight=1)
-
-# Initialize ADB in a separate thread to avoid freezing the GUI
-threading.Thread(target=initialize_adb).start()
-
-# Start GUI loop
-root.mainloop()
