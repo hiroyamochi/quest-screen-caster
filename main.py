@@ -91,6 +91,9 @@ def main(page: ft.Page):
         elif "Quest_3" in device_name:
             models.value = "Quest 3"
             models.update()
+        else:
+            models.value = "Other (No Crop)"
+            models.update()
 
         connect_btn.update()
 
