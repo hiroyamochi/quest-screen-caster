@@ -41,4 +41,4 @@ size = 1024
 ```
 
 ## Acknowledgement
-This tool is based on [scrcpy](https://github.com/Genymobile/scrcpy) by Genymobile, and some features are built by [vuisme](https://github.com/Genymobile/scrcpy/pull/4658#issuecomment-1974796095). Thank you for those great works.
+This tool is based on [scrcpy](https://github.com/Genymobile/scrcpy) by Genymobile, and some features are built by [willykc](https://github.com/Genymobile/scrcpy/pull/4658#issuecomment-1974796095). Thank you for those great works.
