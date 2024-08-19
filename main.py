@@ -19,8 +19,8 @@ def find_application_directory():
     return application_path
 
 # Path to exe
-scrcpy_path = os.path.join(find_application_directory(), "scrcpy-mod-by-vuisme", "scrcpy.exe")
-adb_path = os.path.join(find_application_directory(), "scrcpy-mod-by-vuisme", "adb.exe")
+scrcpy_path = os.path.join(find_application_directory(), "scrcpy", "scrcpy.exe")
+adb_path = os.path.join(find_application_directory(), "scrcpy", "adb.exe")
 
 print(f'app path: {find_application_directory()}')
 print(f'scrcpy_path: {scrcpy_path}')
