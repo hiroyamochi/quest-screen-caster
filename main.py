@@ -91,6 +91,9 @@ def main(page: ft.Page):
         elif "Quest_3" in device_name:
             models.value = "Quest 3"
             models.update()
+        elif "Quest_Pro" in device_name:
+            models.value = "Quest Pro"
+            models.update()
         else:
             models.value = "Other (No Crop)"
             models.update()
@@ -174,11 +177,17 @@ def main(page: ft.Page):
             if device_model == "Quest 2":
                 command.append("--crop=1450:1450:140:140")
             elif device_model == "Quest 3":
-                command.append('--crop=2064:2208:2064:100')
-                command.append('--rotation-offset=-22')
-                command.append('--scale=190')
-                command.append('--position-x-offset=-520')
-                command.append('--position-y-offset=-490')
+                command.append('--crop=2000:2000:2000:0')
+                command.append('--rotation-offset=-20')
+                command.append('--scale=132')
+                command.append('--position-x-offset=-170')
+                command.append('--position-y-offset=-125')
+            elif device_model == "Quest Pro":
+                command.append('--crop=2000:2000:1800:0')
+                command.append('--rotation-offset=-20')
+                command.append('--scale=125')
+                command.append('--position-x-offset=-120')
+                command.append('--position-y-offset=-160')
             
             if serial_number in casting_devices: # Check if device is already casting
                 if casting_devices[serial_number]['process'] is not None or casting_devices[serial_number]['process'].poll() is None:
@@ -221,7 +230,7 @@ def main(page: ft.Page):
         options=[
           ft.dropdown.Option("Quest 2"),
           ft.dropdown.Option("Quest 3"),
-          # ft.dropdown.Option("Quest Pro"),
+          ft.dropdown.Option("Quest Pro"),
           ft.dropdown.Option("Other (No Crop)")
         ],
         value="Quest 2"
