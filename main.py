@@ -211,11 +211,11 @@ def main(page: ft.Page):
         device_model = models.value
 
         device_name = str(device_dd.value)
-        serial_number = get_serial_number(device_name)
+        serial_number = str(get_serial_number(device_name))
         
         print(f'serial: {serial_number}')
 
-        command = [scrcpy_path, '-s', serial_number, '-m', default_size]
+        command = [scrcpy_path, '-s', serial_number, '-m', str(default_size)]
 
         command.append(f'--window-title={device_name}')
 
