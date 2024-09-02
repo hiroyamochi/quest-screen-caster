@@ -6,6 +6,7 @@ import sys
 import configparser
 import re
 import atexit
+import threading
 
 
 def find_application_directory():
@@ -60,15 +61,14 @@ def main(page: ft.Page):
 
     casting_devices = {}
 
-    def check_av(e):
-        if noaudio.value == True:
-            novideo.value = False
-            novideo.update()
-        elif novideo.value == True:
-            noaudio.value = False
-            noaudio.update()
 
-    def on_device_change(e):
+    def check_av(e):
+        if is_cast_audio.value == True:
+            is_cast_video.update()
+        elif is_cast_video.value == True:
+            is_cast_audio.update()
+
+    def on_device_change(e=None):
         nonlocal casting_devices
 
         device_name = str(device_dd.value)
@@ -100,7 +100,7 @@ def main(page: ft.Page):
 
         connect_btn.update()
 
-    def load_device(e):
+    def load_device(e=None):
         connected_devices = get_connected_devices()
 
         print(f'connected_devices: {connected_devices}')
@@ -111,7 +111,14 @@ def main(page: ft.Page):
             in connected_devices.items()
             ]
         device_dd.options = options
+
+        if len(device_dd.options) > 0:
+            device_dd.value = device_dd.options[0].text
+            on_device_change()
+            page.update()
+
         page.update()
+
 
     def disable_proximity_sensor(e):
         device_name = str(device_dd.value)
@@ -133,25 +140,72 @@ def main(page: ft.Page):
             return None
         return serial_number
 
-    def reset_adb(e):
-        subprocess.run([adb_path, "kill-server"])
-        subprocess.run([adb_path, "start-server"])
-    
-    reset_adb
+    def get_ip_address(serial_number):
+        try:
+            result = subprocess.run([adb_path, "-s", serial_number, "shell", "ip", "route"], capture_output=True, text=True)
+            if result.returncode == 0:
+                output = result.stdout
+                ip_match = re.search(r'src (\d+\.\d+\.\d+\.\d+)', output)
+                if ip_match:
+                    return ip_match.group(1)
+                else:
+                    print("IPアドレスが見つかりません")
+                    return None
+            else:
+                print("adbコマンドの実行に失敗しました")
+                return None
+        except Exception as e:
+            print(f"エラーが発生しました: {e}")
+            return None
+
+    def reset_adb(e=None):
+        device_dd.options = [ft.dropdown.Option(text = '読込中……')]
+        device_dd.value = device_dd.options[0].text
+        page.update()
+
+        subprocess.run([adb_path, 'kill-server'])
+        subprocess.run([adb_path, 'start-server'])
+
+        load_device()
+
+    def stop_all_casts():
+        for device in casting_devices.values():
+            if device['process'] is not None or device['process'].poll() is None:
+                device['process'].terminate()
+                reset_adb()
 
     def on_app_exit():
         for device in casting_devices.values():
             if device['process'] is not None or device['process'].poll() is None:
                 device['process'].terminate()
+                reset_adb()
 
     atexit.register(on_app_exit)
+
+    # scrcpyのプロセスを監視する
+    def monitor_process(serial_number, process, connect_btn):
+        process.wait()  # プロセスが終了するのを待つ
+        if serial_number in casting_devices:
+            enable_proximity_sensor(None)
+            connect_btn.icon = ft.icons.PLAY_ARROW
+            connect_btn.text = "接続"
+            connect_btn.update()
+            del casting_devices[serial_number]
+
+    def enable_wireless_connection(e=None):
+        device_name = str(device_dd.value)
+        serial_number = get_serial_number(device_name)
+        ip_address = get_ip_address(serial_number)
+        command1 = [adb_path, "-s", serial_number, "tcpip", "5555"]
+        command2 = [adb_path, "connect", ip_address]
+        subprocess.run(command1)
+        subprocess.run(command2)
+        time.sleep(2)
+        load_device()
 
     def start_scrcpy(e):
         nonlocal casting_devices
 
-        no_video = novideo.value
-        no_audio = noaudio.value
-        bitrate_value = bitrate.value
         audio_s = audiosource.value
 
         device_model = models.value
@@ -162,14 +216,14 @@ def main(page: ft.Page):
         print(f'serial: {serial_number}')
 
         command = [scrcpy_path, '-s', serial_number, '-m', '1024']
-        command.append('--window-title=' + device_name)
+
         if serial_number != "None":
-            if no_video == True:
+            if is_cast_video.value == False:
                 command.append('--no-video')
-            if no_audio == True:
+            if is_cast_audio.value == False:
                 command.append('--no-audio')
-            if bitrate_value:
-                command.append('-b' + str(bitrate_value) + 'M')
+            if bitrate.value:
+                command.append('-b' + str(bitrate.value) + 'M')
             if audio_s is None and audio_s == "内部音声":
                 pass
             elif audio_s == "マイク":
@@ -188,6 +242,8 @@ def main(page: ft.Page):
                 command.append('--scale=125')
                 command.append('--position-x-offset=-120')
                 command.append('--position-y-offset=-160')
+
+            print(f'command: {command}')
             
             if serial_number in casting_devices: # Check if device is already casting
                 if casting_devices[serial_number]['process'] is not None or casting_devices[serial_number]['process'].poll() is None:
@@ -205,6 +261,9 @@ def main(page: ft.Page):
                 connect_btn.icon = ft.icons.STOP
                 connect_btn.text = "切断"
                 connect_btn.update()
+                # プロセスの監視を開始
+                monitor_thread = threading.Thread(target=monitor_process, args=(serial_number, process, connect_btn))
+                monitor_thread.start()
         else:
             connect_btn.text = "デバイスを選択してください"
             connect_btn.icon = ft.icons.ERROR
@@ -235,21 +294,28 @@ def main(page: ft.Page):
         ],
         value="Quest 2"
         )
-    
+
+    # UI設定
     select_model = ft.Row([models])
 
-    novideo = ft.Switch(label="画面をキャストしない", value=False, expand=True, on_change=check_av)
+    is_cast_video = ft.Switch(label="画面をキャスト", value=True, expand=True, on_change=check_av)
 
-    noaudio = ft.Switch(label="音声をキャストしない", value=True, expand=True, on_change=check_av)
+    is_cast_audio = ft.Switch(label="音声をキャスト", value=False, expand=True, on_change=check_av)
 
-    nosource = ft.Row([novideo,noaudio])
+    # is_tcpip_mode = ft.Switch(label="ワイヤレス接続", value=False, expand=True)
+
+    row1 = ft.Row([is_cast_video,is_cast_audio], spacing=10)
 
     bitrate = ft.TextField(label="映像ビットレート (推奨: 20Mbps)",suffix_text="Mbps", value=default_bitrate)
+
+    enable_wireless_connection_btn = ft.TextButton("ワイヤレス接続を有効にする", on_click=enable_wireless_connection, icon=ft.icons.WIFI)
+
+    row2 = ft.Row([bitrate, enable_wireless_connection_btn], spacing=10)
 
     audiosource = ft.Dropdown(label="オーディオソース", options=[ft.dropdown.Option("端末内部"),ft.dropdown.Option("マイク")])
 
     options = ft.Column([
-        nosource,bitrate
+        row1, row2
     ], spacing=10)
 
     label_proximity = ft.Text("近接センサ (無効にすると装着時以外も画面が点灯する)", style=ft.TextThemeStyle.TITLE_SMALL, size=15)
@@ -262,7 +328,19 @@ def main(page: ft.Page):
 
     page.add(title, select_device, select_model, connect_btn, options, label_proximity, column_proximity, reset_adb_button)
 
+    # 起動時に接続されているデバイスを読み込む
+    load_device()
+
+
+
+    # アプリケーション終了時にすべてのキャストを停止する
+    page.on_close = stop_all_casts
+
+
+
+
+
 
 if __name__ == "__main__":
-    ft.app(main)
+    ft.app(target=main)
 
