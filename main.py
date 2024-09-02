@@ -35,8 +35,8 @@ def load_config():
 
 # Load default bitrate from config
 config = load_config()
-default_bitrate = config.getint('scrcpy', 'bitrate', fallback=20)
-default_size = config.getint('scrcpy', 'size', fallback=1024)
+default_bitrate = config.get('scrcpy', 'bitrate', fallback=20)
+default_size = config.get('scrcpy', 'size', fallback=1024)
 
 
 def get_connected_devices():
@@ -215,7 +215,9 @@ def main(page: ft.Page):
         
         print(f'serial: {serial_number}')
 
-        command = [scrcpy_path, '-s', serial_number, '-m', '1024']
+        command = [scrcpy_path, '-s', serial_number, '-m', default_size]
+
+        command.append(f'--window-title={device_name}')
 
         if serial_number != "None":
             if is_cast_video.value == False:
@@ -302,21 +304,13 @@ def main(page: ft.Page):
 
     is_cast_audio = ft.Switch(label="音声をキャスト", value=False, expand=True, on_change=check_av)
 
-    # is_tcpip_mode = ft.Switch(label="ワイヤレス接続", value=False, expand=True)
-
-    row1 = ft.Row([is_cast_video,is_cast_audio], spacing=10)
-
-    bitrate = ft.TextField(label="映像ビットレート (推奨: 20Mbps)",suffix_text="Mbps", value=default_bitrate)
-
     enable_wireless_connection_btn = ft.TextButton("ワイヤレス接続を有効にする", on_click=enable_wireless_connection, icon=ft.icons.WIFI)
 
-    row2 = ft.Row([bitrate, enable_wireless_connection_btn], spacing=10)
+    bitrate = ft.TextField(label="ビットレート", suffix_text="Mbps", value=default_bitrate, width=page.window_width / 2 - 50)
 
-    audiosource = ft.Dropdown(label="オーディオソース", options=[ft.dropdown.Option("端末内部"),ft.dropdown.Option("マイク")])
+    mirror_size = ft.TextField(label="解像度", suffix_text='px', value=default_size, width=page.window_width / 2 - 50)
 
-    options = ft.Column([
-        row1, row2
-    ], spacing=10)
+    audiosource = ft.Dropdown(label="オーディオソース", options=[ft.dropdown.Option("端末内部"), ft.dropdown.Option("マイク")])
 
     label_proximity = ft.Text("近接センサ (無効にすると装着時以外も画面が点灯する)", style=ft.TextThemeStyle.TITLE_SMALL, size=15)
     enable_proximity = ft.TextButton(text='有効にする', icon=ft.icons.REMOVE_RED_EYE, on_click=enable_proximity_sensor)
@@ -324,9 +318,17 @@ def main(page: ft.Page):
 
     reset_adb_button = ft.TextButton("ADBをリセット", on_click=reset_adb, icon=ft.icons.REFRESH, style=ft.ButtonStyle(color=ft.colors.RED))
 
-    column_proximity = ft.Row([enable_proximity, disable_proximity], spacing=10)
-
-    page.add(title, select_device, select_model, connect_btn, options, label_proximity, column_proximity, reset_adb_button)
+    page.add(
+        title, 
+        select_device, 
+        select_model, 
+        connect_btn, 
+        ft.Row([is_cast_video, is_cast_audio, enable_wireless_connection_btn]), 
+        ft.Row([bitrate, mirror_size]), 
+        label_proximity, 
+        ft.Row([enable_proximity, disable_proximity]), 
+        reset_adb_button
+    )
 
     # 起動時に接続されているデバイスを読み込む
     load_device()
