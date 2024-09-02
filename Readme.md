@@ -1,6 +1,6 @@
 # Scrcpy GUI for Quest
 
-A simple GUI for [Scrcpy](https://github.com/Genymobile/scrcpy), a tool for displaying and controlling Android devices connected via USB (currently not supported via TCP/IP in this tool). 
+A simple GUI for [Scrcpy](https://github.com/Genymobile/scrcpy), a tool for displaying and controlling Android devices connected via USB or TCP/IP. 
 
 This GUI is specifically designed for Meta Quest devices.
 
