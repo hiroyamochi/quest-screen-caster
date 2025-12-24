@@ -3,5 +3,9 @@ dist/
 *.spec
 
 .python-version
+__pycache__
 
 screen-caster-quest.exe
+
+
+venv/
