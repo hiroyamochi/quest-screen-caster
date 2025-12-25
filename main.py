@@ -70,6 +70,7 @@ def main(page: ft.Page):
     page.theme_mode = "system"
 
     casting_devices = {}
+    app_exiting = False
 
 
 
@@ -186,12 +187,25 @@ def main(page: ft.Page):
         reset_adb()
 
     def on_app_exit():
+        nonlocal app_exiting
+        app_exiting = True
+        print(f"[{time.strftime('%H:%M:%S')}] App closing: stopping all backends...")
         # Only terminate processes, do NOT update UI (reset_adb)
         for device in casting_devices.values():
             if device['backend'].is_running():
                 device['backend'].stop()
 
     atexit.register(on_app_exit)
+    
+    # ウィンドウクローズイベントをハンドル
+    def on_window_event(e):
+        if e.data == "close":
+            print(f"[{time.strftime('%H:%M:%S')}] Window close event detected")
+            on_app_exit()
+            page.window_destroy()
+
+    page.on_window_event = on_window_event
+    page.window_prevent_close = True
 
     # プロセスを監視する (Backend wrapper)
     def monitor_backend(serial_number, backend, connect_btn):
@@ -200,10 +214,14 @@ def main(page: ft.Page):
             time.sleep(1)
             
         if serial_number in casting_devices:
-            enable_proximity_sensor(None)
-            connect_btn.icon = "play_arrow"
-            connect_btn.text = "接続"
-            connect_btn.update()
+            if not app_exiting:
+                try:
+                    enable_proximity_sensor(None)
+                    connect_btn.icon = "play_arrow"
+                    connect_btn.text = "接続"
+                    connect_btn.update()
+                except Exception:
+                    pass
             del casting_devices[serial_number]
 
     def enable_wireless_connection(e=None):
@@ -268,8 +286,7 @@ def main(page: ft.Page):
                     'width': 1280, # TODO: Make configurable or derive
                     'height': 720,
                     'eye': eye_dd.value.lower(),
-                    'mode': mode_dd.value.lower(),
-                    'udp_port': int(obs_port.value) if obs_port.value else 12345,
+                    'mode': 'window',
                     # Add filter params from config
                     'rotation': int(config[f'Filters.{get_model_from_name(device_name)}' if f'Filters.{get_model_from_name(device_name)}' in config else 'Filters.Default']['rotation']),
                     'k1': float(config[f'Filters.{get_model_from_name(device_name)}' if f'Filters.{get_model_from_name(device_name)}' in config else 'Filters.Default']['k1']),
@@ -313,14 +330,7 @@ def main(page: ft.Page):
         width=100
     )
 
-    mode_dd = ft.Dropdown(
-        label="モード",
-        options=[ft.dropdown.Option("Window"), ft.dropdown.Option("OBS")],
-        value="Window",
-        width=100
-    )
-    
-    obs_port = ft.TextField(label="UDP Port", value="12345", width=100)
+    # OBSモード・UDPポートは非表示（当面サポート外）
 
     connect_btn = ft.FloatingActionButton(icon="play_arrow", text="接続", on_click=toggle_mirroring)
 
@@ -342,7 +352,7 @@ def main(page: ft.Page):
 
     # UI設定
     select_model = ft.Row([models, backend_dd])
-    advanced_options = ft.Row([eye_dd, mode_dd, obs_port])
+    advanced_options = ft.Row([eye_dd])
 
     is_cast_video = ft.Switch(label="画面をキャスト", value=True, expand=True)
 
@@ -452,9 +462,6 @@ def main(page: ft.Page):
             ft.IconButton(icon="settings", on_click=open_calibration, tooltip="補正設定")
         ], alignment="spaceBetween")
     )
-
-    # アプリケーション終了時にすべてのキャストを停止する
-    page.on_close = stop_all_casts
 
 
 
