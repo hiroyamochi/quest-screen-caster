@@ -1,5 +1,5 @@
 from .base import MirrorBackend
-from .utils import get_scrcpy_path, check_process_alive
+from .utils import get_scrcpy_path, check_process_alive, NO_WINDOW
 import subprocess
 import re
 
@@ -18,7 +18,7 @@ def _supports_angle(scrcpy_path: str) -> bool:
     try:
         res = subprocess.run(
             [scrcpy_path, '--version'], capture_output=True, text=True, timeout=5,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            creationflags=NO_WINDOW
         )
         m = re.search(r"scrcpy (\d+)\.", res.stdout)
         if m:
@@ -91,7 +91,7 @@ class ScrcpyBackend(MirrorBackend):
 
         self.process = subprocess.Popen(
             command,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            creationflags=NO_WINDOW
         )
 
     def stop(self) -> None:

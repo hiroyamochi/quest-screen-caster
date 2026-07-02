@@ -1,5 +1,5 @@
 from .base import MirrorBackend
-from .utils import get_adb_path, check_process_alive
+from .utils import get_adb_path, check_process_alive, NO_WINDOW
 import subprocess
 import threading
 import re
@@ -51,7 +51,7 @@ class ScreenRecordBackend(MirrorBackend):
         adb = get_adb_path()
         device_online = False
         for _ in range(5): # Try for ~1s
-            res = subprocess.run([adb, "-s", serial, "get-state"], capture_output=True, text=True, timeout=3)
+            res = subprocess.run([adb, "-s", serial, "get-state"], capture_output=True, text=True, timeout=3, creationflags=NO_WINDOW)
             if res.returncode == 0 and res.stdout.strip() == "device":
                 device_online = True
                 break
@@ -69,7 +69,8 @@ class ScreenRecordBackend(MirrorBackend):
             subprocess.run(
                 [adb, "-s", serial, "shell",
                  "killall screenrecord 2>/dev/null; input keyevent WAKEUP"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=5
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=5,
+                creationflags=NO_WINDOW
             )
         except Exception as e:
             print(f"Warning: critical prep failed: {e}")
@@ -86,7 +87,8 @@ class ScreenRecordBackend(MirrorBackend):
                      "am broadcast -a com.oculus.vrpowermanager.automation_disable; "
                      "am broadcast -a com.oculus.vrpowermanager.prox_close; "
                      "svc power stayon true; wm dismiss-keyguard"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=15
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=15,
+                    creationflags=NO_WINDOW
                 )
             except Exception as e:
                 print(f"Background prep error: {e}")
@@ -206,7 +208,7 @@ class ScreenRecordBackend(MirrorBackend):
         # 1. Start ADB
         self.adb_process = subprocess.Popen(
             adb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            creationflags=NO_WINDOW
         )
         
         # --- GUARD: Check if screenrecord is actually running ---
@@ -223,7 +225,7 @@ class ScreenRecordBackend(MirrorBackend):
                 break
             try:
                 res = subprocess.run([get_adb_path(), "-s", serial, "shell", "pidof", "screenrecord"],
-                                   capture_output=True, text=True, timeout=2)
+                                   capture_output=True, text=True, timeout=2, creationflags=NO_WINDOW)
                 if res.returncode == 0 and res.stdout.strip():
                     is_screenrecord_running = True
                     break
@@ -266,7 +268,7 @@ class ScreenRecordBackend(MirrorBackend):
         # 2. Start Player (ffplay)
         self.player_process = subprocess.Popen(
             player_cmd, stdin=self.adb_process.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            creationflags=NO_WINDOW
         )
         self.player_pid = self.player_process.pid
         print(f"[{time.strftime('%H:%M:%S')}] Player process started (PID {self.player_pid}): {player_cmd}")
@@ -288,7 +290,7 @@ class ScreenRecordBackend(MirrorBackend):
         try:
             res = subprocess.run(
                 [get_adb_path(), "-s", serial, "shell", "cmd", "display", "list"],
-                capture_output=True, text=True, timeout=2.0
+                capture_output=True, text=True, timeout=2.0, creationflags=NO_WINDOW
             )
             summary = res.stdout.strip().splitlines()
             if len(summary) > 10:
@@ -333,7 +335,7 @@ class ScreenRecordBackend(MirrorBackend):
         try:
             res = subprocess.run(
                 [get_adb_path(), "-s", serial, "shell", "cmd", "display", "list"],
-                capture_output=True, text=True, timeout=2.0
+                capture_output=True, text=True, timeout=2.0, creationflags=NO_WINDOW
             )
             if res.returncode != 0:
                 return [0]
@@ -389,7 +391,7 @@ class ScreenRecordBackend(MirrorBackend):
             # Try to resolve PID by window title via tasklist /V (more reliable)
             if sys.platform == 'win32' and self.window_title:
                 try:
-                    tl = subprocess.run(["tasklist", "/V", "/FI", "IMAGENAME eq ffplay.exe"], capture_output=True, text=True)
+                    tl = subprocess.run(["tasklist", "/V", "/FI", "IMAGENAME eq ffplay.exe"], capture_output=True, text=True, creationflags=NO_WINDOW)
                     matched_pid = None
                     for line in tl.stdout.splitlines():
                         if self.window_title in line:
@@ -399,7 +401,7 @@ class ScreenRecordBackend(MirrorBackend):
                                 break
                     if matched_pid:
                         print(f"[{time.strftime('%H:%M:%S')}] Found ffplay PID by title: {matched_pid}")
-                        subprocess.run(["taskkill", "/F", "/T", "/PID", matched_pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                        subprocess.run(["taskkill", "/F", "/T", "/PID", matched_pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, creationflags=NO_WINDOW)
                 except Exception as e:
                     print(f"[{time.strftime('%H:%M:%S')}] tasklist parse error: {e}")
 
@@ -408,7 +410,7 @@ class ScreenRecordBackend(MirrorBackend):
                 try:
                     result = subprocess.run(
                         ["taskkill", "/F", "/FI", f"WINDOWTITLE eq {self.window_title}"],
-                        capture_output=True, text=True, check=False
+                        capture_output=True, text=True, check=False, creationflags=NO_WINDOW
                     )
                     print(f"[{time.strftime('%H:%M:%S')}] taskkill by title result: rc={result.returncode}, out={result.stdout.strip()}, err={result.stderr.strip()}")
                 except Exception as e:
@@ -419,21 +421,21 @@ class ScreenRecordBackend(MirrorBackend):
                 try:
                     result = subprocess.run(
                         ["taskkill", "/F", "/T", "/PID", str(self.player_pid)],
-                        capture_output=True, text=True, check=False
+                        capture_output=True, text=True, check=False, creationflags=NO_WINDOW
                     )
                     print(f"[{time.strftime('%H:%M:%S')}] taskkill result: returncode={result.returncode}, stdout={result.stdout.strip()}, stderr={result.stderr.strip()}")
-                    
+
                     # Double-check if process is really gone
                     time.sleep(0.2)
                     check_result = subprocess.run(
                         ["tasklist", "/FI", f"PID eq {self.player_pid}"],
-                        capture_output=True, text=True
+                        capture_output=True, text=True, creationflags=NO_WINDOW
                     )
                     if str(self.player_pid) in check_result.stdout:
                         print(f"[{time.strftime('%H:%M:%S')}] WARNING: Process {self.player_pid} still running after taskkill!")
                         # Try one more time with absolute force
                         subprocess.run(["taskkill", "/F", "/PID", str(self.player_pid)],
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
                     else:
                         print(f"[{time.strftime('%H:%M:%S')}] Successfully killed player process {self.player_pid}")
                         
@@ -464,15 +466,15 @@ class ScreenRecordBackend(MirrorBackend):
         if self.serial:
             try:
                 # Check online first
-                res = subprocess.run([get_adb_path(), "-s", self.serial, "get-state"], 
-                                   capture_output=True, text=True, timeout=1.0)
+                res = subprocess.run([get_adb_path(), "-s", self.serial, "get-state"],
+                                   capture_output=True, text=True, timeout=1.0, creationflags=NO_WINDOW)
                 if res.returncode == 0 and res.stdout.strip() == "device":
                     # Device is online, try to cleanup
                     subprocess.run([get_adb_path(), "-s", self.serial, "shell", "killall", "screenrecord"],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, creationflags=NO_WINDOW)
                     # Restore proximity sensor state
                     subprocess.run([get_adb_path(), "-s", self.serial, "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.automation_disable"],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, creationflags=NO_WINDOW)
             except Exception:
                 # Ignore any errors during stop cleanup (device might be gone)
                 pass

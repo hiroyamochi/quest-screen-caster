@@ -9,7 +9,7 @@ import atexit
 from mirror_backend.scrcpy import ScrcpyBackend
 from mirror_backend.screenrecord import ScreenRecordBackend
 from mirror_backend.casting import CastingBackend, get_casting_exe
-from mirror_backend.utils import get_adb_path, get_scrcpy_path, get_base_path
+from mirror_backend.utils import get_adb_path, get_scrcpy_path, get_base_path, get_user_config_path, NO_WINDOW
 
 
 
@@ -21,7 +21,16 @@ adb_path = get_adb_path()
 # Load config
 def load_config():
     config = configparser.ConfigParser()
-    config.read(os.path.join(get_base_path(), 'config.ini'))
+    user_path = get_user_config_path()
+    if os.path.exists(user_path):
+        config.read(user_path)
+    else:
+        # First run of a packaged build: no user config next to the exe yet,
+        # so seed from the bundled default so calibration defaults exist
+        # before the user has ever saved anything.
+        bundled_path = os.path.join(get_base_path(), 'config.ini')
+        if os.path.exists(bundled_path):
+            config.read(bundled_path)
     return config
 
 # Load default bitrate from config
@@ -33,7 +42,7 @@ default_size = config.get('scrcpy', 'size', fallback=1024)
 def get_connected_devices():
     devices_info = {}
     try:
-        result = subprocess.run([adb_path, "devices", "-l"], capture_output=True, text=True, timeout=10)
+        result = subprocess.run([adb_path, "devices", "-l"], capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
     except (subprocess.TimeoutExpired, Exception) as e:
         print(f"adb devices failed: {e}")
         return devices_info
@@ -48,7 +57,7 @@ def get_connected_devices():
 def get_real_model_name(serial):
     try:
         # Get ro.product.model
-        result = subprocess.run([adb_path, "-s", serial, "shell", "getprop", "ro.product.model"], capture_output=True, text=True, timeout=5)
+        result = subprocess.run([adb_path, "-s", serial, "shell", "getprop", "ro.product.model"], capture_output=True, text=True, timeout=5, creationflags=NO_WINDOW)
         if result.returncode == 0:
             model = result.stdout.strip()
             # Map code names or explicit names
@@ -153,7 +162,7 @@ def main(page: ft.Page):
         action = "com.oculus.vrpowermanager.prox_close" if not enabled else "com.oculus.vrpowermanager.automation_disable"
         try:
             subprocess.run([adb_path, "-s", serial, "shell", "am", "broadcast", "-a", action],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False)
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False, creationflags=NO_WINDOW)
         except Exception as e:
             print(f"proximity toggle failed for {serial}: {e}")
 
@@ -177,7 +186,7 @@ def main(page: ft.Page):
 
     def get_ip_address(serial_number):
         try:
-            result = subprocess.run([adb_path, "-s", serial_number, "shell", "ip", "route"], capture_output=True, text=True, timeout=5)
+            result = subprocess.run([adb_path, "-s", serial_number, "shell", "ip", "route"], capture_output=True, text=True, timeout=5, creationflags=NO_WINDOW)
             if result.returncode == 0:
                 output = result.stdout
                 ip_match = re.search(r'src (\d+\.\d+\.\d+\.\d+)', output)
@@ -199,8 +208,8 @@ def main(page: ft.Page):
         page.update()
 
         try:
-            subprocess.run([adb_path, 'kill-server'], timeout=10, check=False)
-            subprocess.run([adb_path, 'start-server'], timeout=10, check=False)
+            subprocess.run([adb_path, 'kill-server'], timeout=10, check=False, creationflags=NO_WINDOW)
+            subprocess.run([adb_path, 'start-server'], timeout=10, check=False, creationflags=NO_WINDOW)
         except Exception as e:
             print(f"adb reset failed: {e}")
 
@@ -266,8 +275,8 @@ def main(page: ft.Page):
             print("IPアドレスが取得できないためワイヤレス接続を中止します")
             return
         try:
-            subprocess.run([adb_path, "-s", serial_number, "tcpip", "5555"], timeout=10, check=False)
-            subprocess.run([adb_path, "connect", ip_address], timeout=10, check=False)
+            subprocess.run([adb_path, "-s", serial_number, "tcpip", "5555"], timeout=10, check=False, creationflags=NO_WINDOW)
+            subprocess.run([adb_path, "connect", ip_address], timeout=10, check=False, creationflags=NO_WINDOW)
         except Exception as e:
             print(f"ワイヤレス接続に失敗しました: {e}")
             return
@@ -327,12 +336,13 @@ def main(page: ft.Page):
             else: # ScreenRecord
                 backend = ScreenRecordBackend()
                 filter_section = f'Filters.{get_model_from_name(device_name)}' if f'Filters.{get_model_from_name(device_name)}' in config else 'Filters.Default'
-                sec = config[filter_section]
+                # _cfg_get (defined below) tolerates a missing section/key --
+                # important because a packaged build can end up without
+                # config.ini (e.g. if it wasn't bundled), in which case
+                # `config[filter_section]` would raise KeyError and abort
+                # mirroring with a bare "エラー" on the connect button.
                 def _cf(key, default):
-                    try:
-                        return float(sec.get(key, str(default)))
-                    except Exception:
-                        return float(default)
+                    return _cfg_get(filter_section, key, default)
                 options.update({
                     'width': 1280,
                     'height': 720,
@@ -461,7 +471,11 @@ def main(page: ft.Page):
         config[section]['fov_out'] = str(round(fov_out_slider.value, 1))
         config[section]['roll'] = str(round(roll_slider.value, 1))
 
-        with open('config.ini', 'w') as configfile:
+        # Write to the persistent, exe-adjacent path -- not a bare relative
+        # 'config.ini' (undefined CWD when launched by double-click) and not
+        # get_base_path() (the onefile build's temp extraction dir, wiped on
+        # every launch, which silently discarded saved calibration before).
+        with open(get_user_config_path(), 'w') as configfile:
             config.write(configfile)
 
         page.pop_dialog()

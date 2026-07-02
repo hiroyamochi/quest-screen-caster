@@ -7,7 +7,7 @@ import threading
 import ctypes
 from ctypes import wintypes
 from .base import MirrorBackend
-from .utils import get_adb_path, check_process_alive
+from .utils import get_adb_path, check_process_alive, NO_WINDOW
 
 
 MQDH_PATH = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Meta Quest Developer Hub")
@@ -158,7 +158,7 @@ class CastingBackend(MirrorBackend):
                 args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0,
+                creationflags=NO_WINDOW,
             )
             self._start_time = time.time()
             self._last_window_check = 0.0
@@ -220,6 +220,7 @@ class CastingBackend(MirrorBackend):
                     stderr=subprocess.DEVNULL,
                     timeout=5,
                     check=False,
+                    creationflags=NO_WINDOW,
                 )
             except Exception:
                 pass

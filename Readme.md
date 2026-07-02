@@ -28,8 +28,11 @@ This GUI is specifically designed for Meta Quest devices.
 - You will need `pyinstaller` to build a binary file (.exe)
 - Run following in the project directory:
 ```bash
-pyinstaller main.py --onefile -w --icon=icon.ico --add-data "icon.ico;icon.ico" --add-data "scrcpy:scrcpy" --name screen-caster-quest --noconsole
+pyinstaller main.py --onefile -w --icon=icon.ico --add-data "icon.ico;icon.ico" --add-data "scrcpy:scrcpy" --add-data "config.ini;." --name screen-caster-quest --noconsole
 ```
+- `config.ini` must be bundled (`--add-data "config.ini;."`) so first-run
+  calibration defaults exist; the app writes user changes back next to the
+  built .exe, not into the bundle.
 
 ## Configuration
 You can set the default bitrate & size of mirroring window in the `config.ini` file.
