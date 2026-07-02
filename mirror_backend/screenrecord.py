@@ -1,9 +1,7 @@
 from .base import MirrorBackend
 from .utils import get_adb_path, check_process_alive
-from .virtual_camera import VirtualCameraOutput, PYVIRTUALCAM_AVAILABLE
 import subprocess
 import threading
-import shlex
 import re
 import sys
 import time
@@ -15,7 +13,6 @@ class ScreenRecordBackend(MirrorBackend):
         self.window_title = None
         self.player_pid = None
         self.serial = None
-        self._vcam = None
 
     def start(self, serial: str, options: dict) -> None:
         self.serial = serial
@@ -28,9 +25,11 @@ class ScreenRecordBackend(MirrorBackend):
         for attempt in range(max_retries):
             try:
                 self._start_attempt(serial, options)
-                
-                # Check if process died immediately (e.g. INVALID_LAYER_STACK)
-                time.sleep(0.8)
+
+                # Check if process died immediately (e.g. INVALID_LAYER_STACK).
+                # _start_attempt already polls until screenrecord appears on the
+                # device, so a short confirm here is enough (was a fixed 0.8s).
+                time.sleep(0.3)
                 if self.adb_process and self.adb_process.poll() is not None:
                      # It died, likely checking stderr would confirm INVALID_LAYER_STACK
                      raise RuntimeError("Screenrecord process terminated early.")
@@ -49,99 +48,62 @@ class ScreenRecordBackend(MirrorBackend):
     def _start_attempt(self, serial: str, options: dict, use_display_flag: bool = True) -> None:
         # 0. Check if device is ADB-online
         import time
+        adb = get_adb_path()
         device_online = False
         for _ in range(5): # Try for ~1s
-            res = subprocess.run([get_adb_path(), "-s", serial, "get-state"], capture_output=True, text=True)
+            res = subprocess.run([adb, "-s", serial, "get-state"], capture_output=True, text=True, timeout=3)
             if res.returncode == 0 and res.stdout.strip() == "device":
                 device_online = True
                 break
             time.sleep(0.2)
-            
+
         if not device_online:
             raise RuntimeError(f"Device {serial} is not online or not found in ADB.")
 
-        # Cleanup any zombie screenrecord processes on the device
+        # --- CRITICAL prep, one round-trip ---
+        # Only the things that must happen *before* screenrecord starts:
+        #  - kill any stale screenrecord (device allows only one at a time)
+        #  - WAKEUP (a sleeping display captures a black/invalid frame)
+        # Batching into a single `adb shell` avoids ~5 separate adb.exe spawns.
         try:
-            # 1. Try polite kill first
             subprocess.run(
-                [get_adb_path(), "-s", serial, "shell", "killall", "screenrecord"], 
-                stdout=subprocess.DEVNULL, 
-                stderr=subprocess.DEVNULL,
-                check=False
+                [adb, "-s", serial, "shell",
+                 "killall screenrecord 2>/dev/null; input keyevent WAKEUP"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=5
             )
-            
-            # 2. Check if any are still running and force kill
-            res = subprocess.run(
-                [get_adb_path(), "-s", serial, "shell", "pidof", "screenrecord"],
-                capture_output=True, text=True
-            )
-            
-            if res.returncode == 0 and res.stdout.strip():
-                pids = res.stdout.strip().split()
-                print(f"Found lingering screenrecord processes: {pids}. Killing...")
-                for pid in pids:
-                     subprocess.run(
-                        [get_adb_path(), "-s", serial, "shell", "kill", "-9", pid],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
-                    )
-            
         except Exception as e:
-            print(f"Warning: Failed to cleanup screenrecord processes: {e}")
-            pass
-            
-        # Wake device and disable proximity sensor to prevent black screen/errors
-        try:
-            # Quick wake check - if already awake, skip expensive dumpsys loop
-            res = subprocess.run(
-                [get_adb_path(), "-s", serial, "shell", "dumpsys", "power"], 
-                capture_output=True, text=True, timeout=1.0
-            )
-            is_awake = "mWakefulness=Awake" in res.stdout
-            
-            if not is_awake:
-                # Only do wake loop if device is actually asleep
-                for _ in range(3):  # Reduced from 5 to 3
-                    subprocess.run(
-                        [get_adb_path(), "-s", serial, "shell", "input", "keyevent", "WAKEUP"], 
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
-                    )
-                    time.sleep(0.3)  # Reduced from 0.5
-                    res = subprocess.run(
-                        [get_adb_path(), "-s", serial, "shell", "dumpsys", "power"], 
-                        capture_output=True, text=True, timeout=1.0
-                    )
-                    if "mWakefulness=Awake" in res.stdout:
-                        is_awake = True
-                        break
-            
-            if not is_awake:
-                print(f"Warning: Device {serial} did not report Awake state, trying to proceed anyway...")
+            print(f"Warning: critical prep failed: {e}")
 
-            # Disable proximity sensor for always-on screen during mirroring
-            subprocess.run([get_adb_path(), "-s", serial, "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.automation_disable"], 
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            subprocess.run([get_adb_path(), "-s", serial, "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.prox_close"], 
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            
-            print(f"[{time.strftime('%H:%M:%S')}] Proximity sensor disabled for always-on screen during mirroring")
-            
-            # Keep screen on and clear locks
-            subprocess.run([get_adb_path(), "-s", serial, "shell", "svc", "power", "stayon", "true"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            subprocess.run([get_adb_path(), "-s", serial, "shell", "wm", "dismiss-keyguard"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        except Exception as e:
-            print(f"Wakeup sequence error: {e}")
-            pass
-            
+        # --- NON-CRITICAL prep, off the critical path ---
+        # Proximity-off (always-on screen), stay-on and dismiss-keyguard don't
+        # need to complete before the window appears. `svc power stayon` alone
+        # takes ~1s on Quest, so running these in the background shaves that off
+        # the perceived startup latency.
+        def _bg_prep():
+            try:
+                subprocess.run(
+                    [adb, "-s", serial, "shell",
+                     "am broadcast -a com.oculus.vrpowermanager.automation_disable; "
+                     "am broadcast -a com.oculus.vrpowermanager.prox_close; "
+                     "svc power stayon true; wm dismiss-keyguard"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=15
+                )
+            except Exception as e:
+                print(f"Background prep error: {e}")
+        threading.Thread(target=_bg_prep, daemon=True).start()
+
         width = options.get('width', 1280)
         height = options.get('height', 720)
         bitrate = options.get('bitrate', 5) # Mbps
         display_id = self._resolve_display_id(serial, options.get('display_id')) if use_display_flag else None
 
-        # Log display info for debugging invalid layer errors
-        self._log_display_info(serial, display_id)
-        
+        # (Display list was already queried inside _resolve_display_id; avoid a
+        # second `cmd display list` round-trip here.)
+        if display_id is not None:
+            print(f"[{time.strftime('%H:%M:%S')}] Using display-id {display_id}")
+        else:
+            print(f"[{time.strftime('%H:%M:%S')}] Using default display (no display-id flag)")
+
         # ADB Command
         adb_cmd = [
             get_adb_path(), "-s", serial, "exec-out", "screenrecord",
@@ -152,88 +114,93 @@ class ScreenRecordBackend(MirrorBackend):
             adb_cmd.extend(["--display-id", str(display_id)])
         adb_cmd.extend(["--size", f"{width}x{height}", "-"])
         
-        # Build FFmpeg/FFplay command
-        mode = options.get('mode', 'window')
+        # Build ffplay command
         eye = options.get('eye', 'both')
         
-        # VF filters for cropping
-        # Quest 2/3 default is SBS.
-        # We assume input is the raw full SBS frame.
-        # crop=width:height:x:y
-        vf = []
+        # VF filters.
+        # The Quest screenrecord feed is a raw stereo *fisheye* passthrough
+        # image (side-by-side, one circular fisheye per eye). We crop a SQUARE
+        # centered on the selected eye's optical center, then rectify it.
+        #
+        # Cropping a centered square (rather than the full eye-half) matters:
+        # `v360 input=fisheye` assumes the fisheye fills a square frame. Feeding
+        # an off-center / non-square crop makes the flat projection sample the
+        # black region *outside* the fisheye circle at one edge, which showed up
+        # as the "broken periphery". crop_size / eye_cx / eye_cy are per-device
+        # (config [Filters.*]) and describe that circle.
+        half = width // 2
+        crop_size = int(options.get('crop_size', half))
+        eye_cx = float(options.get('eye_cx', half / 2))   # fisheye center x within a half
+        eye_cy = float(options.get('eye_cy', height / 2))  # fisheye center y
+
+        center_x = None
         if eye == '左眼':
-            vf.append(f"crop={width//2}:{height}:0:0")
+            center_x = eye_cx
         elif eye == '右眼':
-            vf.append(f"crop={width//2}:{height}:{width//2}:0")
-            
-        # Get filter options
-        rotation = options.get('rotation', 0)
-        k1 = options.get('k1', 0.0)
-        k2 = options.get('k2', 0.0)
-        
-        # 1. Rotation (rotate=angle*PI/180)
-        if rotation != 0:
-            vf.append(f"rotate={rotation}*PI/180")
-            
-        # 2. Lens Correction (lenscorrection=k1:k2)
-        if k1 != 0.0 or k2 != 0.0:
-            vf.append(f"lenscorrection=cx=0.5:cy=0.5:k1={k1}:k2={k2}")
-            
+            center_x = half + eye_cx
+
+        vf = []
+        if center_x is not None:
+            x0 = int(round(center_x - crop_size / 2))
+            y0 = int(round(eye_cy - crop_size / 2))
+            x0 = max(0, min(x0, width - crop_size))
+            y0 = max(0, min(y0, height - crop_size))
+            vf.append(f"crop={crop_size}:{crop_size}:{x0}:{y0}")
+
+            # Distortion correction. A 2-coefficient `lenscorrection` only
+            # partly flattens such a wide fisheye and leaves the edges warped
+            # (why barrel correction "looked broken"). `v360` (fisheye->flat)
+            # is purpose-built for this; `roll` levels the eye tilt.
+            correction = options.get('correction', 'v360')
+            if correction == 'v360':
+                fov_in = options.get('fov_in', 150)   # input fisheye FOV (deg)
+                fov_out = options.get('fov_out', 95)  # output flat FOV (deg)
+                roll = options.get('roll', 0)         # tilt correction (deg)
+                out = int(options.get('out_size', 720))
+                vf.append(
+                    "v360=input=fisheye:output=flat"
+                    f":ih_fov={fov_in}:iv_fov={fov_in}"
+                    f":h_fov={fov_out}:v_fov={fov_out}"
+                    f":roll={roll}:w={out}:h={out}"
+                )
+            elif correction == 'lens':
+                # Legacy path (rotate + polynomial lens correction).
+                rotation = options.get('rotation', 0)
+                k1 = options.get('k1', 0.0)
+                k2 = options.get('k2', 0.0)
+                if rotation != 0:
+                    vf.append(f"rotate={rotation}*PI/180")
+                if k1 != 0.0 or k2 != 0.0:
+                    vf.append(f"lenscorrection=cx=0.5:cy=0.5:k1={k1}:k2={k2}")
+            # correction == 'none' -> cropped eye without geometric correction
+        # else: 両眼 (both) -> show the raw SBS frame (v360 is per-eye only)
+
         # Add setpts=0 to avoid buffering/sync issues
         vf.append("setpts=0")
-            
+
         vf_str = ",".join(vf)
         
-        if mode == 'window':
-    
-            # Use ffplay
-            # Match user's working command flags
-            player_cmd = [
-                "ffplay", 
-                "-f", "h264", 
-                "-fflags", "nobuffer", 
-                "-flags", "low_delay", 
-                "-framedrop", 
-                "-probesize", "32", 
-                "-analyzeduration", "0",
-                "-sync", "ext",
-                "-i", "-"
-            ]
-            if vf_str:
-                player_cmd.extend(["-vf", vf_str])
-            
-            # Add title
-            title = options.get('window_title', f"Quest Stream ({serial})")
-            self.window_title = title
-            player_cmd.extend(["-window_title", title])
-            
-        elif mode == 'obs':
-            # Use ffmpeg to UDP
-            udp_port = options.get('udp_port', 12345)
-            player_cmd = ["ffmpeg", "-f", "h264", "-fflags", "nobuffer", "-flags", "low_delay", "-i", "-"]
-            if vf_str:
-                player_cmd.extend(["-vf", vf_str])
+        # Use ffplay.
+        # IMPORTANT: do NOT pass `-fflags nobuffer`. Despite its name, on this
+        # raw-h264-over-pipe input it makes ffplay/ffmpeg spend ~11s before the
+        # first frame is decoded (measured), which was the "window takes 10s+ to
+        # appear" bug. `-flags low_delay` keeps latency low without that stall.
+        player_cmd = [
+            "ffplay",
+            "-f", "h264",
+            "-flags", "low_delay",
+            "-framedrop",
+            "-probesize", "32",
+            "-sync", "ext",
+            "-i", "-"
+        ]
+        if vf_str:
+            player_cmd.extend(["-vf", vf_str])
 
-            # Output to MPEG-TS UDP
-            player_cmd.extend(["-f", "mpegts", f"udp://127.0.0.1:{udp_port}?pkt_size=1316"])
-
-        elif mode == 'virtualcam':
-            if not PYVIRTUALCAM_AVAILABLE:
-                raise ImportError("pyvirtualcam is not installed. Run: uv pip install pyvirtualcam")
-            vcam_width = options.get('vcam_width', width)
-            vcam_height = options.get('vcam_height', height)
-            vcam_fps = options.get('vcam_fps', 30)
-            self._vcam = VirtualCameraOutput(
-                width=vcam_width,
-                height=vcam_height,
-                fps=vcam_fps,
-                device_label=f"Quest ({serial})",
-                vf_str=vf_str,
-            )
-            player_cmd = None
-
-        else:
-            raise ValueError(f"Unknown mode: {mode}")
+        # Add title
+        title = options.get('window_title', f"Quest Stream ({serial})")
+        self.window_title = title
+        player_cmd.extend(["-window_title", title])
 
         # Start Processes
         # 1. Start ADB
@@ -243,11 +210,29 @@ class ScreenRecordBackend(MirrorBackend):
         )
         
         # --- GUARD: Check if screenrecord is actually running ---
-        # Only check this if not windows? 'pidof' is standard on Android.
-        time.sleep(0.5)
-        
+        # Poll for screenrecord to appear on the device instead of a fixed
+        # 0.5s sleep. It normally shows up in ~50ms, so this returns almost
+        # immediately on a healthy device, while still waiting up to ~2s on a
+        # slow one (which avoids spurious "failed to start" retries that used
+        # to add several seconds to startup).
+        is_screenrecord_running = False
+        adb_died = False
+        for _ in range(20):  # up to ~2s
+            if self.adb_process.poll() is not None:
+                adb_died = True
+                break
+            try:
+                res = subprocess.run([get_adb_path(), "-s", serial, "shell", "pidof", "screenrecord"],
+                                   capture_output=True, text=True, timeout=2)
+                if res.returncode == 0 and res.stdout.strip():
+                    is_screenrecord_running = True
+                    break
+            except Exception:
+                pass
+            time.sleep(0.1)
+
         # Check if adb process itself died (e.g. device not found)
-        if self.adb_process.poll() is not None:
+        if adb_died:
             adb_out, adb_err = self._collect_process_output(self.adb_process)
             detail = adb_err or adb_out
             if detail:
@@ -258,16 +243,6 @@ class ScreenRecordBackend(MirrorBackend):
                 return self._start_attempt(serial, options, use_display_flag=False)
             raise RuntimeError("ADB process terminated immediately (device disconnected?). " + (f"Details: {detail}" if detail else ""))
 
-        # Check process on device
-        is_screenrecord_running = False
-        try:
-            res = subprocess.run([get_adb_path(), "-s", serial, "shell", "pidof", "screenrecord"],
-                               capture_output=True, text=True)
-            if res.returncode == 0 and res.stdout.strip():
-                is_screenrecord_running = True
-        except:
-            pass
-             
         if not is_screenrecord_running:
             # Collect output *before* tearing the process down, otherwise we
             # pass None to _collect_process_output and the INVALID_LAYER_STACK
@@ -288,17 +263,13 @@ class ScreenRecordBackend(MirrorBackend):
         # --------------------------------------------------------
 
         
-        # 2. Start Player or Virtual Camera
-        if mode == 'virtualcam' and self._vcam:
-            self._vcam.start_from_h264_pipe(self.adb_process.stdout)
-            print(f"[{time.strftime('%H:%M:%S')}] Virtual camera output started")
-        else:
-            self.player_process = subprocess.Popen(
-                player_cmd, stdin=self.adb_process.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-            )
-            self.player_pid = self.player_process.pid
-            print(f"[{time.strftime('%H:%M:%S')}] Player process started (PID {self.player_pid}): {player_cmd}")
+        # 2. Start Player (ffplay)
+        self.player_process = subprocess.Popen(
+            player_cmd, stdin=self.adb_process.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+        )
+        self.player_pid = self.player_process.pid
+        print(f"[{time.strftime('%H:%M:%S')}] Player process started (PID {self.player_pid}): {player_cmd}")
 
         # Debug logging threads
         def log_stderr(process, name):
@@ -398,11 +369,6 @@ class ScreenRecordBackend(MirrorBackend):
         return stdout_data.decode(errors="replace"), stderr_data.decode(errors="replace")
 
     def stop(self) -> None:
-        # 0) Stop virtual camera if active
-        if self._vcam:
-            self._vcam.stop()
-            self._vcam = None
-
         # 1) Stop ADB first so ffplay gets EOF
         if self.adb_process:
             print(f"[{time.strftime('%H:%M:%S')}] Stopping adb screenrecord...")
@@ -513,8 +479,6 @@ class ScreenRecordBackend(MirrorBackend):
             self.serial = None
 
     def is_running(self) -> bool:
-        if self._vcam and self._vcam.is_active:
-            return True
         if not check_process_alive(self.player_process):
             return False
         # The player (ffplay) keeps its window open showing the last frame even

@@ -216,14 +216,23 @@ def main(page: ft.Page):
                 device['backend'].stop()
 
     atexit.register(on_app_exit)
-    
-    def on_window_event(e):
-        if e.data == "close":
-            on_app_exit()
-            page.window_destroy()
 
-    page.window_prevent_close = True
-    page.on_window_event = on_window_event
+    # NOTE: flet 0.85 replaced the old window API. page.window_prevent_close /
+    # page.on_window_event / page.window_destroy() no longer exist, so the old
+    # handler never fired and mirroring windows (ffplay/Casting) were left
+    # running on exit. Use page.window.prevent_close + page.window.on_event.
+    async def on_window_event(e):
+        if getattr(e, "type", None) == ft.WindowEventType.CLOSE:
+            # Always destroy, even if backend cleanup throws, so prevent_close
+            # can never leave the window stuck open.
+            try:
+                on_app_exit()
+            finally:
+                await page.window.destroy()
+
+    if hasattr(page, "window"):
+        page.window.prevent_close = True
+        page.window.on_event = on_window_event
 
     # プロセスを監視する (Backend wrapper)
     def monitor_backend(serial_number, backend, connect_btn):
@@ -315,19 +324,31 @@ def main(page: ft.Page):
                 backend = CastingBackend()
             else: # ScreenRecord
                 backend = ScreenRecordBackend()
-                mode = 'virtualcam' if vcam_switch.value else 'window'
                 filter_section = f'Filters.{get_model_from_name(device_name)}' if f'Filters.{get_model_from_name(device_name)}' in config else 'Filters.Default'
+                sec = config[filter_section]
+                def _cf(key, default):
+                    try:
+                        return float(sec.get(key, str(default)))
+                    except Exception:
+                        return float(default)
                 options.update({
                     'width': 1280,
                     'height': 720,
                     'eye': eye_dd.value.lower(),
-                    'mode': mode,
-                    'vcam_width': 1280,
-                    'vcam_height': 720,
-                    'vcam_fps': 30,
-                    'rotation': int(config[filter_section]['rotation']),
-                    'k1': float(config[filter_section]['k1']),
-                    'k2': float(config[filter_section]['k2']),
+                    'mode': 'window',
+                    # v360 fisheye->flat correction (see screenrecord.py)
+                    'correction': 'v360',
+                    'fov_in': _cf('fov_in', 150),
+                    'fov_out': _cf('fov_out', 95),
+                    'roll': _cf('roll', 0),
+                    # per-device fisheye geometry (centered square crop)
+                    'crop_size': _cf('crop_size', 640),
+                    'eye_cx': _cf('eye_cx', 320),
+                    'eye_cy': _cf('eye_cy', 360),
+                    # legacy lens-correction params (used only if correction=='lens')
+                    'rotation': _cf('rotation', 0),
+                    'k1': _cf('k1', 0.0),
+                    'k2': _cf('k2', 0.0),
                 })
             
             backend.start(serial_number, options)
@@ -348,70 +369,123 @@ def main(page: ft.Page):
             print(f"Error starting mirror: {ex}")
             update_connect_btn(text="エラー")
     
-    # Calibration UI
+    # Calibration UI (v360 fisheye->flat correction: see screenrecord.py)
+    def _cfg_get(section, key, default):
+        try:
+            return float(config[section].get(key, str(default)))
+        except Exception:
+            return float(default)
+
+    # Per-model recommended defaults (used by the "reset" button and as the
+    # fallback when a model has no saved calibration yet).
+    MODEL_DEFAULTS = {
+        'Quest_2': {'fov_in': 100.0, 'fov_out': 85.0, 'roll': 0.0},
+        'Quest_3': {'fov_in': 150.0, 'fov_out': 95.0, 'roll': -13.0},
+    }
+    GENERIC_DEFAULTS = {'fov_in': 150.0, 'fov_out': 95.0, 'roll': 0.0}
+
+    def _defaults_for_model(model):
+        return MODEL_DEFAULTS.get(model, GENERIC_DEFAULTS)
+
+    fov_in_slider = ft.Slider(min=90, max=180, divisions=90, value=150, expand=True, label="{value}")
+    fov_out_slider = ft.Slider(min=60, max=130, divisions=70, value=95, expand=True, label="{value}")
+    roll_slider = ft.Slider(min=-45, max=45, divisions=180, value=0, expand=True, label="{value}")
+
+    fov_in_field = ft.TextField(width=80, text_align=ft.TextAlign.RIGHT, dense=True, label="°")
+    fov_out_field = ft.TextField(width=80, text_align=ft.TextAlign.RIGHT, dense=True, label="°")
+    roll_field = ft.TextField(width=80, text_align=ft.TextAlign.RIGHT, dense=True, label="°")
+
+    # Keep each slider and its numeric field in sync (either can drive the other).
+    def _bind(slider, field):
+        def on_slider(e):
+            field.value = str(round(slider.value, 1))
+            field.update()
+        def on_field(e):
+            try:
+                v = float(field.value)
+            except (TypeError, ValueError):
+                return
+            v = max(slider.min, min(slider.max, v))
+            slider.value = v
+            field.value = str(round(v, 1))
+            slider.update()
+            field.update()
+        slider.on_change = on_slider
+        field.on_submit = on_field
+        field.on_blur = on_field
+
+    _bind(fov_in_slider, fov_in_field)
+    _bind(fov_out_slider, fov_out_field)
+    _bind(roll_slider, roll_field)
+
+    def _set_values(fov_in, fov_out, roll, update=False):
+        fov_in_slider.value = fov_in; fov_in_field.value = str(round(fov_in, 1))
+        fov_out_slider.value = fov_out; fov_out_field.value = str(round(fov_out, 1))
+        roll_slider.value = roll; roll_field.value = str(round(roll, 1))
+        if update:
+            for c in (fov_in_slider, fov_in_field, fov_out_slider, fov_out_field, roll_slider, roll_field):
+                c.update()
+
     def open_calibration(e):
         device_name = str(device_dd.value)
         model = get_model_from_name(device_name)
         section = f'Filters.{model}'
         if section not in config:
             section = 'Filters.Default'
-            
-        # Load current values
-        try:
-            rot_slider.value = int(config[section]['rotation'])
-            k1_slider.value = float(config[section]['k1'])
-            k2_slider.value = float(config[section]['k2'])
-        except:
-            pass
-        if hasattr(page, "open"):
-            page.open(end_drawer)
-        else:
-            end_drawer.open = True
-            page.update()
+        d = _defaults_for_model(model)
+        _set_values(
+            _cfg_get(section, 'fov_in', d['fov_in']),
+            _cfg_get(section, 'fov_out', d['fov_out']),
+            _cfg_get(section, 'roll', d['roll']),
+        )
+        calib_dialog.title = ft.Text(f"映像補正 — {model} (要再接続)", size=18, weight="bold")
+        # flet 0.85: dialogs/drawers are shown via page.show_dialog (page.open /
+        # page.end_drawer no longer exist, which is why the panel wouldn't open).
+        page.show_dialog(calib_dialog)
+
+    def reset_calibration(e):
+        model = get_model_from_name(str(device_dd.value))
+        d = _defaults_for_model(model)
+        _set_values(d['fov_in'], d['fov_out'], d['roll'], update=True)
 
     def save_calibration(e):
         device_name = str(device_dd.value)
         model = get_model_from_name(device_name)
         section = f'Filters.{model}'
-        
+
         if section not in config:
             config[section] = {}
-            
-        config[section]['rotation'] = str(int(rot_slider.value))
-        config[section]['k1'] = str(k1_slider.value)
-        config[section]['k2'] = str(k2_slider.value)
-        
+
+        config[section]['fov_in'] = str(round(fov_in_slider.value, 1))
+        config[section]['fov_out'] = str(round(fov_out_slider.value, 1))
+        config[section]['roll'] = str(round(roll_slider.value, 1))
+
         with open('config.ini', 'w') as configfile:
             config.write(configfile)
-        
-        if hasattr(page, "close"):
-            page.close(end_drawer)
-        else:
-            end_drawer.open = False
-        page.snack_bar = ft.SnackBar(ft.Text(f"{model} 用の設定を保存しました。反映するには再接続してください。"), open=True)
-        page.update()
 
-    rot_slider = ft.Slider(min=-180, max=180, divisions=360, label="{value} deg")
-    k1_slider = ft.Slider(min=-0.5, max=0.5, divisions=100, label="k1: {value}")
-    k2_slider = ft.Slider(min=-0.5, max=0.5, divisions=100, label="k2: {value}")
-    
-    end_drawer = ft.NavigationDrawer(
-        controls=[
-            ft.Container(padding=12, content=ft.Column([
-                ft.Text("映像補正 (要再接続)", size=20, weight="bold"),
-                ft.Divider(),
-                ft.Text("回転 (Rotation)"),
-                rot_slider,
-                ft.Text("レンズ補正 k1 (Barrel/Pincushion)"),
-                k1_slider,
-                ft.Text("レンズ補正 k2 (Edge)"),
-                k2_slider,
-                ft.Button("保存して閉じる", icon=ft.Icons.SAVE, on_click=save_calibration)
-            ]))
-        ]
+        page.pop_dialog()
+        page.show_dialog(ft.SnackBar(ft.Text(f"{model} 用の設定を保存しました。反映するには再接続してください。")))
+
+    def _param_block(label, slider, field):
+        return ft.Column([
+            ft.Text(label),
+            ft.Row([slider, field], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        ], tight=True, spacing=2)
+
+    calib_dialog = ft.AlertDialog(
+        modal=False,
+        title=ft.Text("映像補正 (ScreenRecord・要再接続)", size=18, weight="bold"),
+        content=ft.Container(width=360, content=ft.Column([
+            _param_block("入力視野角 (魚眼の広さ / 大きいほど強く補正)", fov_in_slider, fov_in_field),
+            _param_block("出力視野角 (映す範囲 / 小さいほど拡大)", fov_out_slider, fov_out_field),
+            _param_block("傾き補正 (roll)", roll_slider, roll_field),
+        ], tight=True)),
+        actions=[
+            ft.TextButton("デフォルトに戻す", icon=ft.Icons.RESTART_ALT, on_click=reset_calibration),
+            ft.TextButton("キャンセル", on_click=lambda e: page.pop_dialog()),
+            ft.FilledButton("保存して閉じる", icon=ft.Icons.SAVE, on_click=save_calibration),
+        ],
     )
-
-    page.end_drawer = end_drawer
 
     title = ft.Text("Screen Caster for Quest", size=20, weight="bold")
     settings_btn = ft.IconButton(icon=ft.Icons.SETTINGS, tooltip="補正設定", on_click=open_calibration)
@@ -512,8 +586,6 @@ def main(page: ft.Page):
 
     is_cast_audio = ft.Switch(label="音声をキャスト", value=False, expand=True)
 
-    vcam_switch = ft.Switch(label="仮想カメラ出力 (OBS)", value=False, expand=True)
-
     enable_wireless_connection_btn = ft.TextButton("ワイヤレス接続を有効にする", on_click=enable_wireless_connection, icon=ft.Icons.WIFI)
 
     bitrate = ft.TextField(label="ビットレート", suffix="Mbps", value=default_bitrate, width=250)
@@ -533,7 +605,7 @@ def main(page: ft.Page):
         select_device,
         select_model,
         advanced_options,
-        ft.Row([is_cast_video, is_cast_audio, vcam_switch]),
+        ft.Row([is_cast_video, is_cast_audio]),
         ft.Row([enable_wireless_connection_btn]),
         ft.Row([bitrate, mirror_size]),
         label_proximity,
