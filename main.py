@@ -314,7 +314,9 @@ def main(page: ft.Page):
             'video': is_cast_video.value,
             'audio': is_cast_audio.value,
             'audio_source': 'mic' if audiosource.value == "マイク" else None,
-            'model': models.value
+            'model': models.value,
+            # Used by both ScrcpyBackend (crop selection) and ScreenRecordBackend.
+            'eye': eye_dd.value,
         }
         
         try:
@@ -334,7 +336,6 @@ def main(page: ft.Page):
                 options.update({
                     'width': 1280,
                     'height': 720,
-                    'eye': eye_dd.value.lower(),
                     'mode': 'window',
                     # v360 fisheye->flat correction (see screenrecord.py)
                     'correction': 'v360',
@@ -517,18 +518,18 @@ def main(page: ft.Page):
     )
 
     def on_backend_change(e=None):
-        # 視点(eye)は ScreenRecord バックエンドでしか使われない。
-        # Scrcpy はモデル別クロップ、Casting(MQDH) はヘッドセット側が
-        # 出力を決めるため選んでも無意味なので、その場合は隠す。
-        eye_dd.visible = (backend_dd.value == "ScreenRecord")
+        # 視点(eye)は ScreenRecord/Scrcpy で片眼クロップに使われる。
+        # Casting(MQDH) はヘッドセット側が出力を決めるため選んでも無意味
+        # なので、その場合だけ隠す。
+        eye_dd.visible = (backend_dd.value != "Casting (MQDH)")
         try:
             eye_dd.update()
         except Exception:
             pass
 
     backend_dd.on_change = on_backend_change
-    # 起動時の初期状態にも反映（既定バックエンドが ScreenRecord 以外なら非表示）
-    eye_dd.visible = (default_backend == "ScreenRecord")
+    # 起動時の初期状態にも反映
+    eye_dd.visible = (default_backend != "Casting (MQDH)")
 
     # OBSモード・UDPポートは非表示（当面サポート外）
 
