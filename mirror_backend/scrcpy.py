@@ -31,7 +31,7 @@ class ScrcpyBackend(MirrorBackend):
             
         # Device specific crops (logic moved from main.py)
         model = options.get('model')
-        if model == "Quest 2":
+        if model in {"Quest 2", "Quest 2/3S"}:
             command.append("--crop=1450:1450:140:140")
         elif model == "Quest 3":
             command.append('--crop=2000:2000:2000:0')

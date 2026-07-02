@@ -1,0 +1,10 @@
+[project]
+name = "quest-screen-caster"
+version = "0.2.0"
+description = "Multi-device screen mirroring for Meta Quest headsets"
+requires-python = ">=3.10"
+dependencies = [
+    "flet[all]==0.85.2",
+    "pyvirtualcam>=0.15",
+    "numpy>=2.0",
+]

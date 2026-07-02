@@ -1,5 +1,6 @@
 from .base import MirrorBackend
 from .utils import get_adb_path, check_process_alive
+from .virtual_camera import VirtualCameraOutput, PYVIRTUALCAM_AVAILABLE
 import subprocess
 import threading
 import shlex
@@ -14,6 +15,7 @@ class ScreenRecordBackend(MirrorBackend):
         self.window_title = None
         self.player_pid = None
         self.serial = None
+        self._vcam = None
 
     def start(self, serial: str, options: dict) -> None:
         self.serial = serial
@@ -192,8 +194,8 @@ class ScreenRecordBackend(MirrorBackend):
                 "-fflags", "nobuffer", 
                 "-flags", "low_delay", 
                 "-framedrop", 
-                "-probesize", "256000", 
-                "-analyzeduration", "200000",
+                "-probesize", "32", 
+                "-analyzeduration", "0",
                 "-sync", "ext",
                 "-i", "-"
             ]
@@ -211,10 +213,25 @@ class ScreenRecordBackend(MirrorBackend):
             player_cmd = ["ffmpeg", "-f", "h264", "-fflags", "nobuffer", "-flags", "low_delay", "-i", "-"]
             if vf_str:
                 player_cmd.extend(["-vf", vf_str])
-            
+
             # Output to MPEG-TS UDP
             player_cmd.extend(["-f", "mpegts", f"udp://127.0.0.1:{udp_port}?pkt_size=1316"])
-            
+
+        elif mode == 'virtualcam':
+            if not PYVIRTUALCAM_AVAILABLE:
+                raise ImportError("pyvirtualcam is not installed. Run: uv pip install pyvirtualcam")
+            vcam_width = options.get('vcam_width', width)
+            vcam_height = options.get('vcam_height', height)
+            vcam_fps = options.get('vcam_fps', 30)
+            self._vcam = VirtualCameraOutput(
+                width=vcam_width,
+                height=vcam_height,
+                fps=vcam_fps,
+                device_label=f"Quest ({serial})",
+                vf_str=vf_str,
+            )
+            player_cmd = None
+
         else:
             raise ValueError(f"Unknown mode: {mode}")
 
@@ -266,17 +283,17 @@ class ScreenRecordBackend(MirrorBackend):
         # --------------------------------------------------------
 
         
-        # 2. Start Player (FFmpeg/FFplay) reading from ADB stdout
-        self.player_process = subprocess.Popen(
-            player_cmd, stdin=self.adb_process.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-        )
-        self.player_pid = self.player_process.pid
-        print(f"[{time.strftime('%H:%M:%S')}] Player process started (PID {self.player_pid}): {player_cmd}")
-        
-        # NOTE: We DO NOT close adb_process.stdout here anymore, 
-        # because it might cause broken pipe or race conditions.
-        # self.adb_process.stdout.close()
+        # 2. Start Player or Virtual Camera
+        if mode == 'virtualcam' and self._vcam:
+            self._vcam.start_from_h264_pipe(self.adb_process.stdout)
+            print(f"[{time.strftime('%H:%M:%S')}] Virtual camera output started")
+        else:
+            self.player_process = subprocess.Popen(
+                player_cmd, stdin=self.adb_process.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            self.player_pid = self.player_process.pid
+            print(f"[{time.strftime('%H:%M:%S')}] Player process started (PID {self.player_pid}): {player_cmd}")
 
         # Debug logging threads
         def log_stderr(process, name):
@@ -287,7 +304,8 @@ class ScreenRecordBackend(MirrorBackend):
                 print(f"Error reading {name} stderr: {e}")
 
         threading.Thread(target=log_stderr, args=(self.adb_process, "ADB"), daemon=True).start()
-        threading.Thread(target=log_stderr, args=(self.player_process, "Player"), daemon=True).start()
+        if self.player_process:
+            threading.Thread(target=log_stderr, args=(self.player_process, "Player"), daemon=True).start()
 
     def _log_display_info(self, serial: str, chosen_display_id):
         """Print available displays and chosen id to aid troubleshooting."""
@@ -375,6 +393,11 @@ class ScreenRecordBackend(MirrorBackend):
         return stdout_data.decode(errors="replace"), stderr_data.decode(errors="replace")
 
     def stop(self) -> None:
+        # 0) Stop virtual camera if active
+        if self._vcam:
+            self._vcam.stop()
+            self._vcam = None
+
         # 1) Stop ADB first so ffplay gets EOF
         if self.adb_process:
             print(f"[{time.strftime('%H:%M:%S')}] Stopping adb screenrecord...")
@@ -487,4 +510,6 @@ class ScreenRecordBackend(MirrorBackend):
             self.serial = None
 
     def is_running(self) -> bool:
+        if self._vcam and self._vcam.is_active:
+            return True
         return check_process_alive(self.player_process)

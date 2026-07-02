@@ -9,6 +9,7 @@ import atexit
 import threading
 from mirror_backend.scrcpy import ScrcpyBackend
 from mirror_backend.screenrecord import ScreenRecordBackend
+from mirror_backend.casting import CastingBackend, get_casting_exe
 from mirror_backend.utils import get_adb_path, get_scrcpy_path, get_base_path
 
 
@@ -60,14 +61,27 @@ def get_real_model_name(serial):
     return "Unknown"
 
 
+def get_model_from_name(device_name_str):
+    # device_name is "Quest_3 (2G0...)" -> returns "Quest_3"
+    if " (" in device_name_str:
+        return device_name_str.split(" (")[0]
+    return "Default"
+
+
 def main(page: ft.Page):
     page.title = "Screen Caster for Quest"
     page.padding = 24
     page.window_min_height = 150
     page.window_min_width = 200
-    page.window_height = 500
-    page.window_width = 600
+    page.window_height = 600
+    page.window_width = 450
+    if hasattr(page, "window"):
+        page.window.min_height = 150
+        page.window.min_width = 200
+        page.window.height = 600
+        page.window.width = 450
     page.theme_mode = "system"
+    page.scroll = ft.ScrollMode.AUTO
 
     casting_devices = {}
     app_exiting = False
@@ -83,14 +97,11 @@ def main(page: ft.Page):
         if serial_number in casting_devices:
             backend = casting_devices[serial_number]['backend']
             if backend.is_running():
-                connect_btn.icon = "stop"
-                connect_btn.text = "切断"
+                update_connect_btn(icon=ft.Icons.STOP, text="切断")
             else:
-                connect_btn.icon = "play_arrow"
-                connect_btn.text = "接続"
+                update_connect_btn(icon=ft.Icons.PLAY_ARROW, text="接続")
         else:
-            connect_btn.icon = "play_arrow"
-            connect_btn.text = "接続"
+            update_connect_btn(icon=ft.Icons.PLAY_ARROW, text="接続")
 
         if "Quest 2" in device_name: # Fallback if already in name
             models.value = "Quest 2/3S"
@@ -197,32 +208,31 @@ def main(page: ft.Page):
 
     atexit.register(on_app_exit)
     
-    # ウィンドウクローズイベントをハンドル
     def on_window_event(e):
         if e.data == "close":
-            print(f"[{time.strftime('%H:%M:%S')}] Window close event detected")
             on_app_exit()
             page.window_destroy()
 
-    page.on_window_event = on_window_event
     page.window_prevent_close = True
+    page.on_window_event = on_window_event
 
     # プロセスを監視する (Backend wrapper)
     def monitor_backend(serial_number, backend, connect_btn):
         # Poll until stopped
+        print(f"[{time.strftime('%H:%M:%S')}] Monitor thread started for {serial_number}")
         while backend.is_running():
             time.sleep(1)
-            
+        
+        print(f"[{time.strftime('%H:%M:%S')}] Monitor: backend stopped for {serial_number}")
         if serial_number in casting_devices:
+            casting_devices.pop(serial_number, None)
             if not app_exiting:
+                print(f"[{time.strftime('%H:%M:%S')}] Monitor: updating button to 接続")
+                update_connect_btn(icon=ft.Icons.PLAY_ARROW, text="接続")
                 try:
                     enable_proximity_sensor(None)
-                    connect_btn.icon = "play_arrow"
-                    connect_btn.text = "接続"
-                    connect_btn.update()
                 except Exception:
                     pass
-            del casting_devices[serial_number]
 
     def enable_wireless_connection(e=None):
         device_name = str(device_dd.value)
@@ -242,25 +252,26 @@ def main(page: ft.Page):
         serial_number = str(get_serial_number(device_name))
         
         if serial_number == "None":
-            connect_btn.text = "デバイスを選択してください"
-            connect_btn.icon = "error"
-            connect_btn.update()
+            update_connect_btn(icon=ft.Icons.ERROR, text="デバイスを選択してください")
             time.sleep(2)
-            connect_btn.text = "接続"
-            connect_btn.icon = "play_arrow"
-            connect_btn.update()
+            update_connect_btn(icon=ft.Icons.PLAY_ARROW, text="接続")
             return
 
         # Check if already running
         if serial_number in casting_devices and casting_devices[serial_number]['backend'].is_running():
              print("プロセスを停止")
-             enable_proximity_sensor(None)
-             casting_devices[serial_number]['backend'].stop()
-             del casting_devices[serial_number]
+             try:
+                 casting_devices[serial_number]['backend'].stop()
+             except Exception:
+                 pass
+             casting_devices.pop(serial_number, None)
              
-             connect_btn.icon = "play_arrow"
-             connect_btn.text = "接続"
-             connect_btn.update()
+             update_connect_btn(icon=ft.Icons.PLAY_ARROW, text="接続")
+             
+             try:
+                 enable_proximity_sensor(None)
+             except Exception:
+                 pass
              return
 
         # Start new mirroring
@@ -280,123 +291,40 @@ def main(page: ft.Page):
         try:
             if backend_type == 'Scrcpy':
                 backend = ScrcpyBackend()
+            elif backend_type == 'Casting (MQDH)':
+                backend = CastingBackend()
             else: # ScreenRecord
                 backend = ScreenRecordBackend()
+                mode = 'virtualcam' if vcam_switch.value else 'window'
+                filter_section = f'Filters.{get_model_from_name(device_name)}' if f'Filters.{get_model_from_name(device_name)}' in config else 'Filters.Default'
                 options.update({
-                    'width': 1280, # TODO: Make configurable or derive
+                    'width': 1280,
                     'height': 720,
                     'eye': eye_dd.value.lower(),
-                    'mode': 'window',
-                    # Add filter params from config
-                    'rotation': int(config[f'Filters.{get_model_from_name(device_name)}' if f'Filters.{get_model_from_name(device_name)}' in config else 'Filters.Default']['rotation']),
-                    'k1': float(config[f'Filters.{get_model_from_name(device_name)}' if f'Filters.{get_model_from_name(device_name)}' in config else 'Filters.Default']['k1']),
-                    'k2': float(config[f'Filters.{get_model_from_name(device_name)}' if f'Filters.{get_model_from_name(device_name)}' in config else 'Filters.Default']['k2']),
+                    'mode': mode,
+                    'vcam_width': 1280,
+                    'vcam_height': 720,
+                    'vcam_fps': 30,
+                    'rotation': int(config[filter_section]['rotation']),
+                    'k1': float(config[filter_section]['k1']),
+                    'k2': float(config[filter_section]['k2']),
                 })
             
             backend.start(serial_number, options)
             casting_devices[serial_number] = {'backend': backend, 'connect': True}
             
-            connect_btn.icon = "stop"
-            connect_btn.text = "切断"
-            connect_btn.update()
-            
+            update_connect_btn(icon=ft.Icons.STOP, text="切断")
+
             # Start monitor
             monitor_thread = threading.Thread(target=monitor_backend, args=(serial_number, backend, connect_btn))
             monitor_thread.start()
-            
+
         except Exception as ex:
             import traceback
             traceback.print_exc()
             print(f"Error starting mirror: {ex}")
-            connect_btn.text = "エラー"
-            connect_btn.update()
+            update_connect_btn(text="エラー")
     
-    title = ft.Text("Screen Caster for Quest", size=20, weight="bold")
-
-    device_dd = ft.Dropdown(label="デバイス", expand=True, options=[], value=None, on_change=on_device_change)
-
-
-    backend_dd = ft.Dropdown(
-        label="バックエンド",
-        options=[ft.dropdown.Option("Scrcpy"), ft.dropdown.Option("ScreenRecord")],
-        value="ScreenRecord",
-        width=150
-    )
-
-    eye_dd = ft.Dropdown(
-        label="視点",
-        options=[ft.dropdown.Option("両眼"), ft.dropdown.Option("左眼"), ft.dropdown.Option("右眼")],
-        value="左眼",
-        width=100
-    )
-
-    # OBSモード・UDPポートは非表示（当面サポート外）
-
-    connect_btn = ft.FloatingActionButton(icon="play_arrow", text="接続", on_click=toggle_mirroring)
-
-    select_device = ft.Row([
-        device_dd,
-        ft.FilledButton("読み込み", icon="refresh", on_click=load_device)
-    ], expand=0)
-
-    models = ft.Dropdown(
-        label="モデル", 
-        options=[
-          ft.dropdown.Option("Quest 2/3S"),
-          ft.dropdown.Option("Quest 3"),
-          ft.dropdown.Option("Quest Pro"),
-          ft.dropdown.Option("その他 (クロップなし)")
-        ],
-        value="Quest 2"
-        )
-
-    # UI設定
-    select_model = ft.Row([models, backend_dd])
-    advanced_options = ft.Row([eye_dd])
-
-    is_cast_video = ft.Switch(label="画面をキャスト", value=True, expand=True)
-
-    is_cast_audio = ft.Switch(label="音声をキャスト", value=False, expand=True)
-
-    enable_wireless_connection_btn = ft.TextButton("ワイヤレス接続を有効にする", on_click=enable_wireless_connection, icon="wifi")
-
-    bitrate = ft.TextField(label="ビットレート", suffix_text="Mbps", value=default_bitrate, width=page.window_width / 2 - 50)
-
-    mirror_size = ft.TextField(label="解像度", suffix_text='px', value=default_size, width=page.window_width / 2 - 50)
-
-    audiosource = ft.Dropdown(label="オーディオソース", options=[ft.dropdown.Option("端末内部"), ft.dropdown.Option("マイク")])
-
-    label_proximity = ft.Text("近接センサ (無効にすると装着時以外も画面が点灯する)", size=15, weight="bold")
-    enable_proximity = ft.TextButton(text='有効にする', icon="remove_red_eye", on_click=enable_proximity_sensor)
-    disable_proximity = ft.TextButton(text='無効にする', icon="remove_red_eye_outlined", on_click=disable_proximity_sensor)
-
-    reset_adb_button = ft.TextButton("ADBをリセット", on_click=reset_adb, icon="refresh", style=ft.ButtonStyle(color="red"))
-
-    page.add(
-        title, 
-        select_device, 
-        select_model, 
-        advanced_options,
-        connect_btn, 
-        ft.Row([is_cast_video, is_cast_audio, enable_wireless_connection_btn]), 
-        ft.Row([bitrate, mirror_size]), 
-        label_proximity, 
-        ft.Row([enable_proximity, disable_proximity]), 
-        reset_adb_button
-    )
-
-    # 起動時に接続されているデバイスを読み込む
-    load_device()
-
-
-
-    # Helper to get model from "Model (Serial)" string
-    def get_model_from_name(device_name_str):
-        # device_name is "Quest_3 (2G0...)" -> returns "Quest_3"
-        if " (" in device_name_str:
-            return device_name_str.split(" (")[0]
-        return "Default"
-
     # Calibration UI
     def open_calibration(e):
         device_name = str(device_dd.value)
@@ -412,8 +340,11 @@ def main(page: ft.Page):
             k2_slider.value = float(config[section]['k2'])
         except:
             pass
-        page.open(end_drawer)
-        page.update()
+        if hasattr(page, "open"):
+            page.open(end_drawer)
+        else:
+            end_drawer.open = True
+            page.update()
 
     def save_calibration(e):
         device_name = str(device_dd.value)
@@ -430,9 +361,11 @@ def main(page: ft.Page):
         with open('config.ini', 'w') as configfile:
             config.write(configfile)
         
-        page.close(end_drawer)
-        page.snack_bar = ft.SnackBar(ft.Text(f"{model} 用の設定を保存しました。反映するには再接続してください。"))
-        page.snack_bar.open = True
+        if hasattr(page, "close"):
+            page.close(end_drawer)
+        else:
+            end_drawer.open = False
+        page.snack_bar = ft.SnackBar(ft.Text(f"{model} 用の設定を保存しました。反映するには再接続してください。"), open=True)
         page.update()
 
     rot_slider = ft.Slider(min=-180, max=180, divisions=360, label="{value} deg")
@@ -450,18 +383,129 @@ def main(page: ft.Page):
                 k1_slider,
                 ft.Text("レンズ補正 k2 (Edge)"),
                 k2_slider,
-                ft.ElevatedButton("保存して閉じる", icon="save", on_click=save_calibration)
+                ft.Button("保存して閉じる", icon=ft.Icons.SAVE, on_click=save_calibration)
             ]))
         ]
     )
 
-    # Header with calibration button
-    page.add(
-        ft.Row([
-            ft.Text("Quest Screen Caster", size=24, weight="bold"),
-            ft.IconButton(icon="settings", on_click=open_calibration, tooltip="補正設定")
-        ], alignment="spaceBetween")
+    page.end_drawer = end_drawer
+
+    title = ft.Text("Screen Caster for Quest", size=20, weight="bold")
+    settings_btn = ft.IconButton(icon=ft.Icons.SETTINGS, tooltip="補正設定", on_click=open_calibration)
+
+    device_dd = ft.Dropdown(label="デバイス", expand=True, options=[], value=None, on_select=on_device_change)
+
+
+    backend_options = [
+        ft.dropdown.Option("Scrcpy"),
+        ft.dropdown.Option("ScreenRecord"),
+    ]
+    default_backend = "ScreenRecord"
+    if get_casting_exe():
+        backend_options.append(ft.dropdown.Option("Casting (MQDH)"))
+        default_backend = "Casting (MQDH)"
+
+    backend_dd = ft.Dropdown(
+        label="バックエンド",
+        options=backend_options,
+        value=default_backend,
+        width=180
     )
+
+    eye_dd = ft.Dropdown(
+        label="視点",
+        options=[ft.dropdown.Option("両眼"), ft.dropdown.Option("左眼"), ft.dropdown.Option("右眼")],
+        value="左眼",
+        width=100
+    )
+
+    # OBSモード・UDPポートは非表示（当面サポート外）
+
+    connect_btn = ft.Button(
+        "接続",
+        icon=ft.Icons.PLAY_ARROW,
+        on_click=toggle_mirroring,
+        style=ft.ButtonStyle(
+            bgcolor=ft.Colors.PRIMARY,
+            color=ft.Colors.ON_PRIMARY,
+            padding=20,
+            text_style=ft.TextStyle(size=16, weight=ft.FontWeight.BOLD),
+        ),
+        height=48,
+    )
+    page.bottom_appbar = ft.BottomAppBar(
+        padding=10,
+        content=ft.Row(
+            [connect_btn],
+            alignment=ft.MainAxisAlignment.END,
+        ),
+    )
+
+    def update_connect_btn(icon=None, text=None):
+        if icon is not None:
+            connect_btn.icon = icon
+        if text is not None:
+            connect_btn.content = text
+        try:
+            page.update()
+        except Exception as ex:
+            print(f"[{time.strftime('%H:%M:%S')}] update_connect_btn error: {ex}")
+
+    select_device = ft.Row([
+        device_dd,
+        ft.Button("読み込み", icon=ft.Icons.REFRESH, on_click=load_device)
+    ], expand=0)
+
+    models = ft.Dropdown(
+        label="モデル", 
+        options=[
+          ft.dropdown.Option("Quest 2/3S"),
+          ft.dropdown.Option("Quest 3"),
+          ft.dropdown.Option("Quest Pro"),
+          ft.dropdown.Option("その他 (クロップなし)")
+        ],
+                value="Quest 2/3S"
+        )
+
+    # UI設定
+    select_model = ft.Row([models, backend_dd])
+    advanced_options = ft.Row([eye_dd])
+
+    is_cast_video = ft.Switch(label="画面をキャスト", value=True, expand=True)
+
+    is_cast_audio = ft.Switch(label="音声をキャスト", value=False, expand=True)
+
+    vcam_switch = ft.Switch(label="仮想カメラ出力 (OBS)", value=False, expand=True)
+
+    enable_wireless_connection_btn = ft.TextButton("ワイヤレス接続を有効にする", on_click=enable_wireless_connection, icon=ft.Icons.WIFI)
+
+    bitrate = ft.TextField(label="ビットレート", suffix="Mbps", value=default_bitrate, width=250)
+
+    mirror_size = ft.TextField(label="解像度", suffix="px", value=default_size, width=250)
+
+    audiosource = ft.Dropdown(label="オーディオソース", options=[ft.dropdown.Option("端末内部"), ft.dropdown.Option("マイク")])
+
+    label_proximity = ft.Text("近接センサ (無効にすると装着時以外も画面が点灯する)", size=15, weight="bold")
+    enable_proximity = ft.TextButton('有効にする', icon=ft.Icons.REMOVE_RED_EYE, on_click=enable_proximity_sensor)
+    disable_proximity = ft.TextButton('無効にする', icon=ft.Icons.REMOVE_RED_EYE_OUTLINED, on_click=disable_proximity_sensor)
+
+    reset_adb_button = ft.TextButton("ADBをリセット", on_click=reset_adb, icon=ft.Icons.REFRESH, style=ft.ButtonStyle(color="red"))
+
+    page.add(
+        ft.Row([title, settings_btn], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+        select_device,
+        select_model,
+        advanced_options,
+        ft.Row([is_cast_video, is_cast_audio, vcam_switch]),
+        ft.Row([enable_wireless_connection_btn]),
+        ft.Row([bitrate, mirror_size]),
+        label_proximity,
+        ft.Row([enable_proximity, disable_proximity]),
+        reset_adb_button,
+    )
+
+    # 起動時に接続されているデバイスを読み込む
+    load_device()
 
 
 
@@ -469,5 +513,5 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.run(main)
 
