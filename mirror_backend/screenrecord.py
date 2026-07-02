@@ -269,10 +269,15 @@ class ScreenRecordBackend(MirrorBackend):
             pass
              
         if not is_screenrecord_running:
-            # Stop Start process
-            self.adb_process.terminate()
-            self.adb_process = None
+            # Collect output *before* tearing the process down, otherwise we
+            # pass None to _collect_process_output and the INVALID_LAYER_STACK
+            # retry below can never trigger.
             adb_out, adb_err = self._collect_process_output(self.adb_process)
+            try:
+                self.adb_process.terminate()
+            except Exception:
+                pass
+            self.adb_process = None
             detail = adb_err or adb_out
             if detail:
                 detail = detail.strip()
@@ -476,15 +481,13 @@ class ScreenRecordBackend(MirrorBackend):
                     self.player_process.wait(timeout=1)
             except:
                 pass
-        
-            # Last resort: kill any remaining ffplay.exe (may affect external ffplay instances)
-            if sys.platform == 'win32':
-                try:
-                    subprocess.run(["taskkill", "/F", "/IM", "ffplay.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-                    print(f"[{time.strftime('%H:%M:%S')}] taskkill /IM ffplay.exe issued as last resort")
-                except Exception as e:
-                    print(f"[{time.strftime('%H:%M:%S')}] taskkill by image failed: {e}")
-            
+
+            # NOTE: We deliberately do NOT `taskkill /IM ffplay.exe` here. That
+            # would kill *every* ffplay instance on the machine, which breaks
+            # multi-device mirroring (stopping one device closes all the others)
+            # and any unrelated ffplay the user has open. The title/PID-scoped
+            # kills above are sufficient to stop this backend's own player.
+
             self.player_process = None
             self.player_pid = None
             self.window_title = None
@@ -512,4 +515,13 @@ class ScreenRecordBackend(MirrorBackend):
     def is_running(self) -> bool:
         if self._vcam and self._vcam.is_active:
             return True
-        return check_process_alive(self.player_process)
+        if not check_process_alive(self.player_process):
+            return False
+        # The player (ffplay) keeps its window open showing the last frame even
+        # after the device-side screenrecord/adb feed dies (e.g. screenrecord's
+        # ~3 minute limit, or the headset going to sleep). Treat a dead feed as
+        # "not running" so the monitor can clean up instead of leaving a frozen
+        # window that still looks connected.
+        if self.adb_process is not None and not check_process_alive(self.adb_process):
+            return False
+        return True

@@ -6,7 +6,6 @@ import sys
 import configparser
 import re
 import atexit
-import threading
 from mirror_backend.scrcpy import ScrcpyBackend
 from mirror_backend.screenrecord import ScreenRecordBackend
 from mirror_backend.casting import CastingBackend, get_casting_exe
@@ -33,7 +32,11 @@ default_size = config.get('scrcpy', 'size', fallback=1024)
 
 def get_connected_devices():
     devices_info = {}
-    result = subprocess.run([adb_path, "devices", "-l"], capture_output=True, text=True)
+    try:
+        result = subprocess.run([adb_path, "devices", "-l"], capture_output=True, text=True, timeout=10)
+    except (subprocess.TimeoutExpired, Exception) as e:
+        print(f"adb devices failed: {e}")
+        return devices_info
     if result.returncode == 0:
         for match in re.finditer(r'(\S+)\s+device .+ model:(\S+)\s+', result.stdout):
             serial_number = match.group(1)
@@ -45,7 +48,7 @@ def get_connected_devices():
 def get_real_model_name(serial):
     try:
         # Get ro.product.model
-        result = subprocess.run([adb_path, "-s", serial, "shell", "getprop", "ro.product.model"], capture_output=True, text=True)
+        result = subprocess.run([adb_path, "-s", serial, "shell", "getprop", "ro.product.model"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             model = result.stdout.strip()
             # Map code names or explicit names
@@ -79,7 +82,7 @@ def main(page: ft.Page):
         page.window.min_height = 150
         page.window.min_width = 200
         page.window.height = 600
-        page.window.width = 450
+        page.window.width = 600
     page.theme_mode = "system"
     page.scroll = ft.ScrollMode.AUTO
 
@@ -143,15 +146,24 @@ def main(page: ft.Page):
         page.update()
 
 
+    def _set_proximity(serial, enabled):
+        """Toggle the headset proximity sensor for a specific serial."""
+        if not serial or serial == "None":
+            return
+        action = "com.oculus.vrpowermanager.prox_close" if not enabled else "com.oculus.vrpowermanager.automation_disable"
+        try:
+            subprocess.run([adb_path, "-s", serial, "shell", "am", "broadcast", "-a", action],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False)
+        except Exception as e:
+            print(f"proximity toggle failed for {serial}: {e}")
+
     def disable_proximity_sensor(e):
-        device_name = str(device_dd.value)
-        serial = get_serial_number(device_name)
-        subprocess.run([adb_path, "-s", serial, "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.prox_close"])
-  
+        serial = get_serial_number(str(device_dd.value))
+        _set_proximity(serial, enabled=False)
+
     def enable_proximity_sensor(e):
-        device_name = str(device_dd.value)
-        serial = get_serial_number(device_name)
-        subprocess.run([adb_path, "-s", serial, "shell", "am", "broadcast", "-a", "com.oculus.vrpowermanager.automation_disable"])
+        serial = get_serial_number(str(device_dd.value))
+        _set_proximity(serial, enabled=True)
 
     def get_serial_number(device_name):
         # get serial number from device name menu
@@ -165,7 +177,7 @@ def main(page: ft.Page):
 
     def get_ip_address(serial_number):
         try:
-            result = subprocess.run([adb_path, "-s", serial_number, "shell", "ip", "route"], capture_output=True, text=True)
+            result = subprocess.run([adb_path, "-s", serial_number, "shell", "ip", "route"], capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 output = result.stdout
                 ip_match = re.search(r'src (\d+\.\d+\.\d+\.\d+)', output)
@@ -186,16 +198,13 @@ def main(page: ft.Page):
         device_dd.value = device_dd.options[0].text
         page.update()
 
-        subprocess.run([adb_path, 'kill-server'])
-        subprocess.run([adb_path, 'start-server'])
+        try:
+            subprocess.run([adb_path, 'kill-server'], timeout=10, check=False)
+            subprocess.run([adb_path, 'start-server'], timeout=10, check=False)
+        except Exception as e:
+            print(f"adb reset failed: {e}")
 
         load_device()
-
-    def stop_all_casts():
-        for device in casting_devices.values():
-            if device['backend'].is_running():
-                device['backend'].stop()
-        reset_adb()
 
     def on_app_exit():
         nonlocal app_exiting
@@ -227,21 +236,32 @@ def main(page: ft.Page):
         if serial_number in casting_devices:
             casting_devices.pop(serial_number, None)
             if not app_exiting:
-                print(f"[{time.strftime('%H:%M:%S')}] Monitor: updating button to 接続")
-                update_connect_btn(icon=ft.Icons.PLAY_ARROW, text="接続")
+                # Restore the proximity sensor on the device that actually
+                # finished (not whatever device happens to be selected now).
                 try:
-                    enable_proximity_sensor(None)
+                    _set_proximity(serial_number, enabled=True)
                 except Exception:
                     pass
+                # Only flip the connect button back if the finished device is
+                # the one currently shown; otherwise we'd mislabel a device
+                # that is still mirroring and allow a double-start.
+                if get_serial_number(str(device_dd.value)) == serial_number:
+                    print(f"[{time.strftime('%H:%M:%S')}] Monitor: updating button to 接続")
+                    update_connect_btn(icon=ft.Icons.PLAY_ARROW, text="接続")
 
     def enable_wireless_connection(e=None):
         device_name = str(device_dd.value)
         serial_number = get_serial_number(device_name)
         ip_address = get_ip_address(serial_number)
-        command1 = [adb_path, "-s", serial_number, "tcpip", "5555"]
-        command2 = [adb_path, "connect", ip_address]
-        subprocess.run(command1)
-        subprocess.run(command2)
+        if not ip_address:
+            print("IPアドレスが取得できないためワイヤレス接続を中止します")
+            return
+        try:
+            subprocess.run([adb_path, "-s", serial_number, "tcpip", "5555"], timeout=10, check=False)
+            subprocess.run([adb_path, "connect", ip_address], timeout=10, check=False)
+        except Exception as e:
+            print(f"ワイヤレス接続に失敗しました: {e}")
+            return
         time.sleep(2)
         load_device()
 
@@ -315,9 +335,12 @@ def main(page: ft.Page):
             
             update_connect_btn(icon=ft.Icons.STOP, text="切断")
 
-            # Start monitor
-            monitor_thread = threading.Thread(target=monitor_backend, args=(serial_number, backend, connect_btn))
-            monitor_thread.start()
+            # Start monitor via page.run_thread (NOT a raw threading.Thread):
+            # Flet binds the page to a context var per run_thread call, and
+            # page.update() only reaches the client when that context is set.
+            # A raw thread's update() calls are silently dropped, which is why
+            # the connect button never reverted after the window was closed.
+            page.run_thread(monitor_backend, serial_number, backend, connect_btn)
 
         except Exception as ex:
             import traceback
@@ -418,6 +441,20 @@ def main(page: ft.Page):
         value="左眼",
         width=100
     )
+
+    def on_backend_change(e=None):
+        # 視点(eye)は ScreenRecord バックエンドでしか使われない。
+        # Scrcpy はモデル別クロップ、Casting(MQDH) はヘッドセット側が
+        # 出力を決めるため選んでも無意味なので、その場合は隠す。
+        eye_dd.visible = (backend_dd.value == "ScreenRecord")
+        try:
+            eye_dd.update()
+        except Exception:
+            pass
+
+    backend_dd.on_change = on_backend_change
+    # 起動時の初期状態にも反映（既定バックエンドが ScreenRecord 以外なら非表示）
+    eye_dd.visible = (default_backend == "ScreenRecord")
 
     # OBSモード・UDPポートは非表示（当面サポート外）
 
