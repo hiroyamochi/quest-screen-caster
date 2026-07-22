@@ -5,6 +5,7 @@ import uuid
 import time
 import threading
 import ctypes
+from urllib.parse import quote
 from ctypes import wintypes
 from .base import MirrorBackend
 from .utils import get_adb_path, check_process_alive, NO_WINDOW
@@ -46,6 +47,11 @@ def get_casting_adb():
     if os.path.exists(MQDH_ADB):
         return MQDH_ADB
     return "adb"
+
+
+def _cache_key_for_serial(serial: str) -> str:
+    """Return a Windows-safe, collision-resistant directory component."""
+    return quote(serial, safe="._-")
 
 
 def _collect_process_tree_pids(root_pid):
@@ -133,7 +139,7 @@ class CastingBackend(MirrorBackend):
                 "Meta Quest Developer Hub",
                 "MagicIsland",
                 "Cache",
-                serial,
+                _cache_key_for_serial(serial),
             )
             os.makedirs(cache_dir, exist_ok=True)
 
